@@ -1,0 +1,69 @@
+---
+title: "01_exp_data"
+author: "Puvvula"
+date: "2023-07-17"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, haven)
+
+dat <- "~/Documents/ope_ssis/data/"
+res<- "~/Documents/ope_ssis/result/"
+```
+
+#ope data - 3 visits 16w, 26w, birth
+```{r}
+ope_exp<- read_sas(paste0(dat, "ur_fr_prenatal.sas7bdat")) |>
+  clean_names() |>
+  filter(flg_nr == 0)
+```
+
+#lod summaries
+```{r}
+bel_lod_summaries <- ope_exp |>
+  group_by(analyte_code, visit) |>
+  summarize(freq_bel_lod = sum(flg_lod == 1, na.rm = TRUE),
+            total_obs = n(),
+            pct_bel_lod = round((freq_bel_lod / total_obs) * 100, 2))
+
+write_csv(bel_lod_summaries, paste0(res, "bel_lod_summaries.csv"))
+```
+
+#remove exposures if fraction <LOD is >=60% 
+```{r}
+ope_exp_filtered<- ope_exp |>
+  filter(!analyte_code %in% c("DBzP", "DCP", "TBBA", "BCPP") ) |>
+  mutate(analyte_code = tolower(analyte_code)) |>
+  mutate(analyte_code = fct_recode(as.factor(analyte_code), 
+                             bcep = "bcetp", bdcipp = "bdcpp", 
+                             dnbp = "dbup", dphp = "dphp"))|>
+  group_by(visit, analyte_code) |>
+  mutate(median_sg = median(specific_gravity, na.rm = TRUE)) |>
+  mutate(result_sg_adj= result * (median_sg - 1) / (specific_gravity - 1), na.rm=T)
+
+#exposure summary pre-imputation
+exp_summary <- ope_exp_filtered |>
+  group_by(analyte_code, visit) |>
+  summarize(freq_bel_lod = sum(flg_lod == 1, na.rm = TRUE),
+            total_obs = n(),
+            pct_bel_lod = round((freq_bel_lod / total_obs) * 100, 2),
+            median_level = round(median(result_sg_adj, na.rm = TRUE),2),
+            percentile_25 = round(quantile(result_sg_adj, 0.25, na.rm = TRUE),2), 
+            percentile_75 = round(quantile(result_sg_adj, 0.75, na.rm = TRUE),2))
+
+write_csv(exp_summary, paste0(res, "exp_summary_pre_imp.csv"))
+```
+
+#data prep for analytic set
+```{r}
+exp_dat<- ope_exp_filtered |>
+  select(c(1,2,4,5)) |>
+  pivot_wider(names_from = c(analyte_code, visit), values_from = result) |>
+  as_tibble()
+```
+
+
+
+

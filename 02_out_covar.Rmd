@@ -1,0 +1,51 @@
+---
+title: "02_out_covar"
+author: "Puvvula"
+date: "2023-07-17"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor)
+
+dat <- "~/Documents/ope_ssis/data/"
+res<- "~/Documents/ope_ssis/result/"
+```
+
+#outcome and covariates
+```{r}
+#6 observations with missing outcome are removed
+out_cov<- read_csv(paste0(dat, "HOME_Data_20220810_tailored_OPE.csv")) |>
+  clean_names()|>
+  filter(is.na(twin_set)) |> #remove twins
+  filter(if_any(56:59, ~ !is.na(.))) |>
+  select(c(1,4,6,9,14,19,23,29,31,32,33,56:59)) |>
+  mutate(child_race = ifelse(child_race == "White, non-Hispanic", 
+                                      "white", "non_white"),
+         mom_edu_p4_cat = ifelse(mom_edu_p4_cat %in% c("Some college or 2-year degree", 
+                                              "High school or less"), 
+                                          "lt_bach", "gt_eq_bach"),
+         mari_st_p4 = ifelse(mari_st_p4 %in% c("Married, living apart", 
+                                              "Married, living together"), 
+                                          "married", "un_married"),
+         depression_p4_cat = ifelse(depression_p4_cat %in% c("Minimal"), 
+                                          "min", "mild_to_severe")) |>
+  mutate(rfr_gs_t = if_else(is.na(rfr_gs_t), median(rfr_gs_t, na.rm = TRUE), rfr_gs_t))|>
+  mutate_if(is.character, as.factor)
+
+#summary of exposure and 
+summary_stats<- out_cov |>
+  select(-c(1, 2)) |>
+  select(where(is.numeric)) |>
+  pivot_longer(everything(), names_to = "metric", values_to = "value") |>
+  group_by(metric) |>
+   summarize(na_count = sum(is.na(value)),
+             median_conc = round(median(value, na.rm = TRUE), 2),
+             percentile_25 = round(quantile(value, 0.25, na.rm = TRUE), 2),
+             percentile_75 = round(quantile(value, 0.75, na.rm = TRUE), 2))
+```
+
+
+
+

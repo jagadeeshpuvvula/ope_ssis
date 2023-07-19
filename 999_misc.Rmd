@@ -1,0 +1,108 @@
+---
+title: "099_misc"
+author: "Puvvula"
+date: "2023-07-19"
+output: pdf_document
+---
+
+#to generate rda file for exposure-outcome combination by imputed set
+
+#Model exposure-response associations using GEE model - to save each model to rda object
+```{r}
+dat<- read_csv(paste0(dat, "ope_ssis_imputed.csv"))
+
+model<- geeglm(ss_std_score_c ~ log(dphp)*visit + 
+                 gender + child_race + mat_age + mari_st_p4 + mom_edu_p4_cat+
+                 mid_income_p4 + cotinine, 
+  data = test, 
+  id = id, 
+  family="gaussian", corstr="independence")
+```
+
+```{r}
+gee_function <- function(data, output_folder, exposures, outcomes, covariates, imputation) {
+  # Create the output folder if it doesn't exist
+  if (!dir.exists(output_folder)) {
+    dir.create(output_folder)
+  }
+
+  # Loop through each combination of exposures, outcomes, and imputation levels
+  for (exposure in exposures) {
+    for (outcome in outcomes) {
+      for (imp_level in unique(imputation)) {
+        # Prepare the file name for the output
+        prefix <- paste0("imp", imp_level)
+        file_name <- paste0(output_folder, "/", prefix, "_", exposure, "_", outcome, ".rda")
+
+        # Set the response variable
+        response <- data[[outcome]]
+
+        # Set the predictor variables
+        predictors <- c(paste0("log(", exposure, ")*visit"), covariates)
+        formula <- as.formula(paste(outcome, "~", paste(predictors, collapse = " + ")))
+
+        # Subset the data for the specific imputation level
+        imp_data <- data[imputation == imp_level, ]
+
+        # Fit the geeglm model
+        model <- geeglm(formula, data = imp_data, id = id, family = "gaussian", corstr = "independence")
+
+        # Save the model object to an RDA file with the modified file name
+        save(model, file = file_name)
+
+        # Print a message indicating the completion of the model
+        cat("Geeglm model saved for imputation level", imp_level, ",", exposure, "and", outcome, "\n")
+      }
+    }
+  }
+}
+```
+
+```{r}
+gee_function(data = dat,
+             output_folder = "~/Documents/ope_ssis/test",
+             exposures = c("bcep", "bdcipp", "dnbp", "dphp"),
+             outcomes = c("ss_std_score_c", "pb_std_score_c", "ss_std_score_p", "pb_std_score_p"),
+             covariates = c("gender", "child_race", "mat_age", "mari_st_p4", 
+                            "mom_edu_p4_cat", "mid_income_p4", "cotinine"),
+             imputation = dat$imp)
+```
+
+#function to compile results into a file
+```{r}
+compile_gee_mi_results <- function(folder_location) {
+  # List all .rda files in the given folder
+  rda_files <- list.files(path = folder_location, pattern = "\\.rda$", full.names = TRUE)
+  
+  # Create an empty tibble to store the combined results
+  combined_results <- tibble()
+  
+  # Loop through each .rda file
+  for (file in rda_files) {
+    # Load the .rda file
+    load(file)
+    
+    # Extract tidy results with confidence intervals
+    tidy_results <- tidy(model, conf.int = TRUE)
+    
+    # Add the object name as a new column in the tidy results
+    tidy_results <- tidy_results %>% mutate(file_name = basename(file))
+    
+    # Append the tidy results to the combined_results tibble
+    combined_results <- bind_rows(combined_results, tidy_results)
+    
+    # Remove the loaded object from the environment
+    rm(model)
+  }
+  
+  # Return the combined results
+  return(combined_results)
+}
+```
+
+#get results
+```{r}
+mi_result <- compile_gee_mi_results("~/Documents/ope_ssis/result/gee_mi_res")
+
+write_csv(mi_result, paste0(res, "mi_res_estimates.csv"))
+```
