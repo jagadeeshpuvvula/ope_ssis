@@ -9,13 +9,13 @@ output: pdf_document
 library(pacman)
 pacman::p_load(tidyverse, janitor, haven)
 
-dat <- "~/Documents/ope_ssis/data/"
+dat_loc <- "~/Documents/ope_ssis/data/"
 res<- "~/Documents/ope_ssis/result/"
 ```
 
 #ope data - 3 visits 16w, 26w, birth
 ```{r}
-ope_exp<- read_sas(paste0(dat, "ur_fr_prenatal.sas7bdat")) |>
+ope_exp<- read_sas(paste0(dat_loc, "raw/ur_fr_prenatal.sas7bdat")) |>
   clean_names() |>
   filter(flg_nr == 0)
 ```
@@ -49,9 +49,9 @@ exp_summary <- ope_exp_filtered |>
   summarize(freq_bel_lod = sum(flg_lod == 1, na.rm = TRUE),
             total_obs = n(),
             pct_bel_lod = round((freq_bel_lod / total_obs) * 100, 2),
-            median_level = round(median(result_sg_adj, na.rm = TRUE),2),
-            percentile_25 = round(quantile(result_sg_adj, 0.25, na.rm = TRUE),2), 
-            percentile_75 = round(quantile(result_sg_adj, 0.75, na.rm = TRUE),2))
+            median_iqr = paste(round(quantile(result_sg_adj, 0.5),2), "(", 
+                               round(quantile(result_sg_adj, 0.25),2), "-", round(quantile(result_sg_adj, 0.75),2), ")"))
+
 
 write_csv(exp_summary, paste0(res, "exp_summary_pre_imp.csv"))
 ```
@@ -64,6 +64,10 @@ exp_dat<- ope_exp_filtered |>
   as_tibble()
 ```
 
+#export exposure data
+```{r}
+write_csv(exp_dat, paste0(dat_loc, "exp_dat.csv"))
+```
 
 
 
