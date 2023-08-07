@@ -9,12 +9,12 @@ output: pdf_document
 library(pacman)
 pacman::p_load(tidyverse, janitor, qgcomp, norm, mice, geepack)
 
-dat <- "~/Documents/ope_ssis/data/"
+dat_loc <- "~/Documents/ope_ssis/data/"
 res<- "~/Documents/ope_ssis/result/"
 ```
 
 ```{r}
-dat<- read_csv(paste0(dat, "analytic_set.csv"))
+dat<- read_csv(paste0(dat_loc, "analytic_set.csv"))
 ```
 
 #multiple imputation of exposures below LOD
@@ -38,32 +38,9 @@ dataframes <- lapply(17:20, function(position) {
 list2env(setNames(dataframes, paste0("dat_", sapply(dataframes, function(df) tail(colnames(df), 1)))), .GlobalEnv)
 ```
 
-#function to create imputed datasets - leftcenslognorm imputation - 10 sets
-```{r}
-create_imputed_datasets <- function(...) {
-  datasets <- list(...)
-  imputed_datasets <- list()
-
-  for (i in seq_along(datasets)) {
-    dataset <- datasets[[i]]
-    variable_name <- deparse(substitute(dataset))  # Get the name of the dataframe object
-
-    imputed_dataset <- dataset |>
-      mice(m = 10, method = "leftcenslognorm", maxit = 20, seed = 2023) |>
-      clean_names()
-
-    imputed_datasets[[i]] <- imputed_dataset
-    assign(paste0("imp_", variable_name), imputed_dataset, envir = .GlobalEnv)
-  }
-
-  return(imputed_datasets)
-}
-```
-
 # generate imputed datasets
 ```{r}
 imputed_datasets <- create_imputed_datasets(dat_bcep, dat_dnbp, dat_dphp, dat_bdcipp)
-
 # Access the imputed datasets
 imp_dat_bcep <- imputed_datasets[[1]]
 imp_dat_dnbp <- imputed_datasets[[2]]
@@ -78,36 +55,6 @@ for (obj in ls()) {
 }
 ```
 
-# Built GEE and pooling using examples from UCLA: 
-#https://stats.oarc.ucla.edu/r/faq/how-do-i-perform-multiple-imputation-using-predictive-mean-matching-in-r/
-
-#function to run GEE - using dataframes from MICE miltiple imputation
-```{r}
-runGeeglm <- function(datasets, outcomes, outputFolder) {
-  for (dataset in datasets) {
-    # Extract the last part of the input data name
-    exposure <- tail(strsplit(dataset, "_")[[1]], 1)
-  
-    # Load the dataset
-    data <- get(dataset)
-  
-    # Iterate over each outcome
-    for (outcome in outcomes) {
-      # Perform geeglm analysis
-      fit <- with(data, geeglm(get(outcome) ~ log(get(exposure))*visit + 
-                                gender + child_race + mat_age + mari_st_p4 + mom_edu_p4_cat +
-                                mid_income_p4 + cotinine, 
-                              id = participant_id, 
-                              family = "gaussian", corstr = "independence"))
-    
-      # Save the output to the provided folder in RDA format
-      outputName <- paste(outputFolder, "/", dataset, "_", outcome, "_", exposure, ".rda", sep = "")
-      save(fit, file = outputName)
-    }
-  }
-}
-```
-
 #save exposure-response association in rda files
 ```{r}
 runGeeglm(datasets = c("imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp", "imp_dat_dphp"), 
@@ -115,48 +62,6 @@ runGeeglm(datasets = c("imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp", "imp_da
           outputFolder = "~/Documents/ope_ssis/test/")
 ```
 
-#function to extract GEE estimates from rda objects
-```{r}
-extractGEE <- function(input_folder, output_folder) {
-  # Get a list of RDA files in the input folder
-  rda_files <- list.files(input_folder, pattern = "\\.rda$", full.names = TRUE)
-  
-  # Initialize an empty dataframe to store the results
-  data <- data.frame()
-  
-  # Loop through each RDA file
-  for (file in rda_files) {
-    # Load the RDA file
-    load(file)
-    
-    # Perform operations and extract required rows
-    extracted_data <- as_tibble(tidy(pool(fit), conf.int = TRUE)) %>%
-      slice(2, 12, 13)
-    
-    # Get the filename without path or extension
-    filename <- str_remove(basename(file), "\\.[^.]+$")
-    
-    # Trim the filename to remove the "imp_dat_" prefix
-    trimmed_filename <- str_remove(filename, "^imp_dat_")
-    
-    # Split the filename into exposure and outcome variables
-    split_strings <- str_split(trimmed_filename, "_")
-    exposure <- split_strings[[1]][1]
-    outcome <- paste(split_strings[[1]][2:(length(split_strings[[1]]) - 1)], collapse = "_")
-    
-    # Add the exposure and outcome variables
-    extracted_data$exposure <- exposure
-    extracted_data$outcome <- outcome
-    
-    # Bind the extracted data to the existing dataframe
-    data <- bind_rows(data, extracted_data)
-  }
-  
-  # Export the dataframe as a CSV to the output folder
-  output_file <- file.path(output_folder, "output.csv")
-  write_csv(data, output_file)
-}
-```
 
 #get estimates as csv
 ```{r}
