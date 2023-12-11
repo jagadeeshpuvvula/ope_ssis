@@ -56,27 +56,34 @@ n_repeats <- nrow(df_res) %/% 3
 repetition_indices <- rep(1:n_repeats, each = 3)
 
 # Use group_by and summarize to calculate row sums for each group
-result <- df_res %>%
-  group_by(repetition = repetition_indices) %>%
+result <- df_res |>
+  group_by(repetition = repetition_indices) |>
   mutate(
     estimate = ifelse(row_number() != 1, estimate + first(estimate), estimate),
     conf_low = ifelse(row_number() != 1, conf_low + first(conf_low), conf_low),
     conf_high = ifelse(row_number() != 1, conf_high + first(conf_high), conf_high)
-  ) %>%
+  ) |>
   ungroup() |>
-  filter(str_detect(term, "-visit26W$|-visitBirth$"))
+  mutate(term = fct_recode(term,
+                            "BCEP-visit16W" = "BCEP",
+                            "BDCIPP-visit16W" = "BDCIPP",
+                            "DNBP-visit16W" = "DNBP",
+                            "DPHP-visit16W" = "DPHP"
+                            ))
+  #filter(str_detect(term, "-visit26W$|-visitBirth$"))
 ```
 
 
 # plot
 ```{r}
-#cbbPalette <- c("#D55E00", "#0072B2")
+cbbPalette <- c("#D55E00", "#0072B2")
 
 ggplot(result, aes(y = fct_rev(term), x = estimate, xmin = conf_low, xmax = conf_high)) + 
-  geom_pointrange(position=position_dodge(width=0.5),size = 0.6) +
+  geom_pointrange(aes(color = ifelse(conf_low <= 0 & conf_high >= 0, "Contains 0", "Doesn't contain 0")), 
+                  position = position_dodge(width = 0.5), size = 0.6)+
   geom_vline(aes(xintercept = 0), linetype="dashed") + 
   facet_nested(outcome_set ~ outcome_category+outcome_label, scales="free")+
-  #scale_colour_manual(values=cbbPalette) +
+  scale_colour_manual(values=cbbPalette) +
   labs(y=NULL,
        x=expression(paste(beta[GEE-glm]," [95% CI]")),
        title = "",
