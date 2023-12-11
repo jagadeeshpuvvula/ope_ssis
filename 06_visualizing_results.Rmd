@@ -1,0 +1,107 @@
+---
+title: "06_visualizing_results"
+author: "Puvvula"
+date: "2023-08-07"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, ggh4x)
+
+res<- "~/Documents/ope_ssis/test/"
+```
+
+#data prep for visualization
+```{r}
+df_res<- read_csv(paste0(res, "output.csv")) |>
+  mutate(exposure = toupper(exposure),
+         term = case_when(
+           term == "log(get(exposure))" ~ as.character(exposure),
+           TRUE ~ paste0(as.character(exposure), "-", str_extract(term, "(?<=:)[^:]+$")))) |>
+  select(c(1,2,5:7,17)) |>
+  mutate(outcome_set = ifelse(grepl("p$", outcome), "Parent", "Child"),
+         outcome_label = factor(str_remove(outcome, "_[pc]$")),
+         outcome_label = fct_recode(outcome_label,
+                                    Social_skills_scale = "ss_std_score",
+                                    Communication = "com_raw",
+                                    Cooperation = "coop_raw",
+                                    Assertion = "assert_raw",
+                                    Responsibility = "res_raw",
+                                    Empathy = "emp_raw",
+                                    Engagement = "eng_raw",
+                                    Self_control = "self_raw",
+                                    Problem_behaviors_scale = "pb_std_score",
+                                    Externalizing = "ext_raw",
+                                    Bullying = "bul_raw",
+                                    Hyperactivity_inattention = "hyp_raw",
+                                    Internalizing = "int_raw",
+                                    Autism_spectrum = "as_raw"),
+         outcome_category = case_when(outcome_label %in% 
+                                        c("Communication", "Cooperation", "Assertion", 
+                                          "Responsibility", "Empathy", "Engagement", 
+                                          "Self_control", "Social_skills_scale") ~ "Social Skills",
+                                      TRUE ~ "Problem Behavior"),
+         across(where(is.numeric), ~ round(., 3)),
+         significance = ifelse(p.value < 0.05, "signf", "non_sign")) |>
+  clean_names() |>
+  select(1,2,4:10)
+```
+
+```{r}
+# Determine the number of repetitions needed
+n_repeats <- nrow(df_res) %/% 3
+
+# Create a sequence of indices for the repetitions
+repetition_indices <- rep(1:n_repeats, each = 3)
+
+# Use group_by and summarize to calculate row sums for each group
+result <- df_res %>%
+  group_by(repetition = repetition_indices) %>%
+  mutate(
+    estimate = ifelse(row_number() != 1, estimate + first(estimate), estimate),
+    conf_low = ifelse(row_number() != 1, conf_low + first(conf_low), conf_low),
+    conf_high = ifelse(row_number() != 1, conf_high + first(conf_high), conf_high)
+  ) %>%
+  ungroup() |>
+  filter(str_detect(term, "-visit26W$|-visitBirth$"))
+```
+
+
+# plot
+```{r}
+#cbbPalette <- c("#D55E00", "#0072B2")
+
+ggplot(result, aes(y = fct_rev(term), x = estimate, xmin = conf_low, xmax = conf_high)) + 
+  geom_pointrange(position=position_dodge(width=0.5),size = 0.6) +
+  geom_vline(aes(xintercept = 0), linetype="dashed") + 
+  facet_nested(outcome_set ~ outcome_category+outcome_label, scales="free")+
+  #scale_colour_manual(values=cbbPalette) +
+  labs(y=NULL,
+       x=expression(paste(beta[GEE-glm]," [95% CI]")),
+       title = "",
+       caption = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+        plot.title=element_text(size = 10, hjust = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text=element_text(size=10),
+        axis.text = element_text(size = 10),
+        axis.text.x=element_text(size=10, angle = 45, hjust=1),
+        axis.ticks.x=element_blank(),
+        strip.text.x=element_text(size=7.5,angle=0),
+        strip.text.y = element_text(size=10),
+        strip.placement = "outside",
+        strip.background = element_rect(fill=NULL, colour = NULL))+
+  guides(color="none")
+```
+
+#export
+```{r}
+ggsave(paste0(res, "gee_glm.tiff"), 
+       width = 14,height = 8,
+       dpi=300)
+```
+
+
