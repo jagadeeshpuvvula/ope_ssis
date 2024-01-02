@@ -16,7 +16,8 @@ res<- "~/Documents/ope_ssis/result/"
 #SKIP UNTIL LINE 63 - which loads the imputed datasets from an R object
 
 ```{r}
-dat<- read_csv(paste0(dat_loc, "analytic_set.csv"))
+dat<- read_csv(paste0(dat_loc, "analytic_set.csv")) |>
+  select(-c(dnbp_postnatal_1_yr, dnbp_postnatal_2_yr)) #discussed with aimin and removing these observations as they have >85% obs below LOD
 ```
 
 #multiple imputation of exposures below LOD
