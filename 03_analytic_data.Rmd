@@ -19,7 +19,7 @@ exp_dat<- read_csv(paste0(dat_loc, "exp_dat.csv"))
 out_cov<- read_csv(paste0(dat_loc, "out_cov.csv"))
 
 df<- full_join(exp_dat, out_cov, by="participant_id") |>
-  filter(if_any(14:51, ~ !is.na(.))) # drop observations if any outcome or covariates are missing
+  filter(if_any(38:64, ~ !is.na(.))) # drop observations if any outcome or covariates are missing
 
 write_csv(df, paste0(dat_loc, "analytic_set.csv"))
 ```
@@ -34,8 +34,11 @@ summary_stats<- df |>
   group_by(metric) |>
   summarize(n_na = sum(is.na(value)),
             pct_na = round(sum(is.na(value)/length(value)*100), 2), # fraction of observations to be imputed
-            median_iqr = paste(round(quantile(value, 0.5, na.rm = T),2), "(", 
-                               round(quantile(value, 0.25, na.rm = T),2), "-", round(quantile(value, 0.75, na.rm = T),2), ")"))
+            median_iqr = paste(
+              round(quantile(value, 0.5, na.rm = TRUE), 2), "(", 
+              round(quantile(value, 0.25, na.rm = TRUE), 2), "-", 
+              round(quantile(value, 0.75, na.rm = TRUE), 2), ")"
+              ))
 
 write_csv(summary_stats, paste0(res, "summary_analytic_dat.csv"))
 ```
