@@ -1,0 +1,78 @@
+---
+title: "01.1_exposure_unmeasured_viz"
+author: "Puvvula"
+date: "2023-12-13"
+output: pdf_document
+---
+
+#exp_dat from 01_exp_dat.rmd file line 87
+```{r}
+# Assuming combined_data is your dataset
+missing_data <- is.na(df[, 1:37])
+missing_data_df <- as.data.frame(missing_data)
+
+# Adding row numbers as a column
+missing_data_df$Observations <- seq_len(nrow(missing_data_df))
+
+# Converting the data to long format
+missing_data_long <- pivot_longer(
+  missing_data_df,
+  cols = -Observations,
+  names_to = "Variables",
+  values_to = "Missing"
+)
+```
+
+```{r}
+# Define the desired order for y-axis labels
+custom_order <- c("bcep_prenatal_16W", "bcep_prenatal_26W", "bcep_delivery", "bcep_postnatal_1_yr", 
+                  "bcep_postnatal_2_yr", "bcep_postnatal_3_yr", "bcep_postnatal_4_yr", "bcep_postnatal_5_yr", "bcep_postnatal_8_yr",
+                  "bdcipp_prenatal_16W", "bdcipp_prenatal_26W", "bdcipp_delivery", "bdcipp_postnatal_1_yr", 
+                  "bdcipp_postnatal_2_yr", "bdcipp_postnatal_3_yr", "bdcipp_postnatal_4_yr", "bdcipp_postnatal_5_yr", "bdcipp_postnatal_8_yr",
+                  "dnbp_prenatal_16W", "dnbp_prenatal_26W", "dnbp_delivery", "dnbp_postnatal_1_yr", 
+                  "dnbp_postnatal_2_yr", "dnbp_postnatal_3_yr", "dnbp_postnatal_4_yr", "dnbp_postnatal_5_yr", "dnbp_postnatal_8_yr",
+                  "dphp_prenatal_16W", "dphp_prenatal_26W", "dphp_delivery", "dphp_postnatal_1_yr", 
+                  "dphp_postnatal_2_yr", "dphp_postnatal_3_yr", "dphp_postnatal_4_yr", "dphp_postnatal_5_yr", "dphp_postnatal_8_yr")
+```
+
+
+```{r}
+# Calculate percentage of missing values per variable
+missing_percentage <- missing_data_long |>
+  group_by(Variables) |>
+  summarize(MissingPercentage = mean(Missing, na.rm = TRUE) * 100) |>
+  arrange(desc(MissingPercentage))
+
+missing_data_long_filtered <- missing_data_long %>%
+  filter(!is.na(Variables)) %>%
+  mutate(
+    Variables = factor(Variables, levels = custom_order)
+  )
+
+# Remaining code for creating the heatmap with ggplot
+ggplot(missing_data_long_filtered, aes(x = Observations, y = reorder(Variables, -as.numeric(Missing)), fill = Missing)) +
+  geom_tile() +
+  scale_fill_manual(values = c("TRUE" = "royalblue", "FALSE" = "gray90"), na.value = "gray90") +
+  labs(title = "", x = "Study participants (n=236)", y = "Variables") +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_blank(),  # Remove x-axis text
+    axis.ticks.x = element_blank(),
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    legend.key.width = unit(0.8, "cm"),
+    legend.key.height = unit(0.3, "cm")
+  ) +
+  guides(fill = guide_legend(direction = "horizontal",  title.hjust = 0.5, title="Not reported or Below LOD")) +
+  scale_y_discrete(labels = function(x) paste0(x, " (", round(missing_percentage$MissingPercentage[match(x, missing_percentage$Variables)], 1), "%)"))+
+   geom_hline(yintercept = 2.5, color = "black", size = 0.5) 
+```
+
+```{r}
+ggsave("~/Documents/ope_ssis/result/missing_pattern_ope_with_ssis.tiff", 
+       width = 10,height = 7,
+       dpi=300)
+```
