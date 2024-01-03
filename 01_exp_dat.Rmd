@@ -48,33 +48,45 @@ ope_exp <- bind_rows(ope_exp_n1, ope_exp_n2) |>
 bel_lod_summaries <- ope_exp |>
   group_by(analyte_code, visit) |>
   summarize(freq_bel_lod = sum(flg_lod == 1, na.rm = TRUE),
+            freq_NR_interference = sum(flg_nr == 1, na.rm = TRUE),
             total_obs = n(),
-            pct_bel_lod = round((freq_bel_lod / total_obs) * 100, 2))
+            pct_bel_lod = round((freq_bel_lod / total_obs) * 100, 2),
+            pct_NR_interference = round((freq_NR_interference / total_obs) * 100, 2)) |>
+  mutate(
+    freq_pct_bel_lod = paste0(freq_bel_lod, " (", pct_bel_lod, ")"),
+    freq_pct_NR_interference = paste0(freq_NR_interference, " (", pct_NR_interference, ")")
+  ) |>
+  select(-c(freq_bel_lod, freq_NR_interference, pct_bel_lod, pct_NR_interference))
 
 write_csv(bel_lod_summaries, paste0(res, "bel_lod_summaries.csv"))
 ```
 
-#remove exposures if fraction <LOD is >=60% 
+#recoding exposure labels
 ```{r}
 ope_exp_filtered<- ope_exp  |>
-  mutate(analyte_code = tolower(analyte_code)) |>
+  mutate(analyte_code = tolower(analyte_code),
+         specific_gravity = ifelse(specific_gravity == 1, specific_gravity + 0.0001, specific_gravity)) |>
   mutate(analyte_code = fct_recode(as.factor(analyte_code), 
                              bcep = "bcetp", bdcipp = "bdcpp", 
                              dnbp = "dbup", dphp = "dphp"))|>
   group_by(visit, analyte_code) |>
   mutate(median_sg = median(specific_gravity, na.rm = TRUE)) |>
-  mutate(result_sg_adj= result * (median_sg - 1) / (specific_gravity - 1), na.rm=T)
+  mutate(result_sg_adj= result * (median_sg - 1) / (specific_gravity - 1), na.rm=T,
+         result_sg_adj = round(result_sg_adj, 3)) |>
+  ungroup() |>
+  select(-median_sg)
 
-#exposure summary pre-imputation
+
+#exposure summary - pre-imputation
 exp_summary <- ope_exp_filtered |>
   group_by(analyte_code, visit) |>
   summarize(freq_bel_lod = sum(flg_lod == 1, na.rm = TRUE),
             total_obs = n(),
             pct_bel_lod = round((freq_bel_lod / total_obs) * 100, 2),
             median_iqr = paste(
-              round(quantile(result_sg_adj, 0.5, na.rm = TRUE), 2), "(", 
-              round(quantile(result_sg_adj, 0.25, na.rm = TRUE), 2), "-", 
-              round(quantile(result_sg_adj, 0.75, na.rm = TRUE), 2), ")"
+              round(quantile(result, 0.5, na.rm = TRUE), 2), "(", 
+              round(quantile(result, 0.25, na.rm = TRUE), 2), "-", 
+              round(quantile(result, 0.75, na.rm = TRUE), 2), ")"
               ),
             analyte_lod = first(analyte_lod))
 
@@ -82,16 +94,31 @@ exp_summary <- ope_exp_filtered |>
 write_csv(exp_summary, paste0(res, "exp_summary_pre_imp.csv"))
 ```
 
-#data prep for analytic set
+#data prep for analytic set - removed observations not reported due to interference
 ```{r}
 exp_dat <- ope_exp_filtered |>
   filter(!analyte_code %in% c("dbzp", "dcp", "tbba", "bcpp", "ipppp", "tbppp")) |>
-  select(c(1, 2, 4, 5)) |>
+  group_by(participant_id, analyte_code, visit, flg_nr) |>
+  summarise(result_sg_adj = mean(result_sg_adj, na.rm = TRUE), .groups = "drop") |>
   group_by(participant_id, analyte_code, visit) |>
-  summarise(result = mean(result, na.rm = TRUE), .groups = "drop") |>
-  mutate(result = replace_na(result, NA)) |>
-  pivot_wider(names_from = c(analyte_code, visit), values_from = result) |>
-  as_tibble()
+  filter(!(n() > 1 && any(flg_nr == 1))) |>
+  filter(!(n() > 1 && all(flg_nr == 0) && all(is.na(result_sg_adj)))) |>
+  distinct(participant_id, analyte_code, visit, .keep_all = TRUE) |>
+  mutate(result_sg_adj = ifelse(flg_nr == 1, 9999, result_sg_adj)) |> #observations with 9999 are NR due to interference
+  select(-c(flg_nr)) |>
+  mutate(result_sg_adj = replace_na(result_sg_adj, NA)) |>
+  pivot_wider(id_cols = participant_id,
+              names_from = c(analyte_code, visit), 
+              values_from = result_sg_adj) 
+```
+
+#finding duplicates
+```{r}
+# Identify duplicates based on participant_id, analyte_code, and visit
+exp_dat|>
+  group_by(participant_id, analyte_code, visit) |>
+  summarise(n = n(), .groups = "drop") |>
+  filter(n > 1)
 ```
 
 #export exposure data
