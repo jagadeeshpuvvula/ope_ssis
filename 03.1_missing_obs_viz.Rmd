@@ -7,15 +7,14 @@ output: pdf_document
 
 #exp_dat from 01_exp_dat.rmd file line 87
 ```{r}
-# Assuming combined_data is your dataset
-missing_data <- is.na(df[, 1:37])
+missing_data <- ifelse(is.na(df[, 1:37]), "BelowLOD", ifelse(df[, 1:37] == 9999, "NR-interf", FALSE))
 missing_data_df <- as.data.frame(missing_data)
 
 # Adding row numbers as a column
 missing_data_df$Observations <- seq_len(nrow(missing_data_df))
 
 # Converting the data to long format
-missing_data_long <- pivot_longer(
+missing_data_long <- tidyr::pivot_longer(
   missing_data_df,
   cols = -Observations,
   names_to = "Variables",
@@ -39,20 +38,21 @@ custom_order <- c("bcep_prenatal_16W", "bcep_prenatal_26W", "bcep_delivery", "bc
 ```{r}
 # Calculate percentage of missing values per variable
 missing_percentage <- missing_data_long |>
+  filter(!is.na(Missing)) |>
+  group_by(Variables, Missing) |>
+  summarize(Count = n()) |>
   group_by(Variables) |>
-  summarize(MissingPercentage = mean(Missing, na.rm = TRUE) * 100) |>
-  arrange(desc(MissingPercentage))
+  mutate(Percentage = (Count / sum(Count)) * 100) |>
+  filter(Missing == "BelowLOD") |>
+  arrange(desc(Percentage))
 
-missing_data_long_filtered <- missing_data_long %>%
-  filter(!is.na(Variables)) %>%
-  mutate(
-    Variables = factor(Variables, levels = custom_order)
-  )
+missing_data_long_filtered <- missing_data_long |>
+  filter(!is.na(Variables) & Variables != "participant_id") 
 
 # Remaining code for creating the heatmap with ggplot
-ggplot(missing_data_long_filtered, aes(x = Observations, y = reorder(Variables, -as.numeric(Missing)), fill = Missing)) +
+ggplot(missing_data_long_filtered, aes(x = Observations, y = Variables, fill = Missing)) +
   geom_tile() +
-  scale_fill_manual(values = c("TRUE" = "royalblue", "FALSE" = "gray90"), na.value = "gray90") +
+  scale_fill_manual(values = c("BelowLOD" = "royalblue", "NR-interf" = "red", "FALSE" = "gray90")) +
   labs(title = "", x = "Study participants (n=236)", y = "Variables") +
   theme_bw() +
   theme(
@@ -66,9 +66,9 @@ ggplot(missing_data_long_filtered, aes(x = Observations, y = reorder(Variables, 
     legend.key.width = unit(0.8, "cm"),
     legend.key.height = unit(0.3, "cm")
   ) +
-  guides(fill = guide_legend(direction = "horizontal",  title.hjust = 0.5, title="Not reported or Below LOD")) +
-  scale_y_discrete(labels = function(x) paste0(x, " (", round(missing_percentage$MissingPercentage[match(x, missing_percentage$Variables)], 1), "%)"))+
-   geom_hline(yintercept = 2.5, color = "black", size = 0.5) 
+  guides(fill = guide_legend(direction = "horizontal",  title.hjust = 0.5, title="Below LOD")) +
+  scale_y_discrete(labels = function(x) paste0(x, " (", round(missing_percentage$Percentage[match(x, missing_percentage$Variables)], 1), "%)"))
+  #geom_hline(yintercept = 2.5, color = "black", size = 0.5) 
 ```
 
 ```{r}
