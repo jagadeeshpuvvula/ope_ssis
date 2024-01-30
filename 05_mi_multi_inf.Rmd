@@ -7,43 +7,72 @@ output: pdf_document
 
 ```{r}
 library(pacman)
-pacman::p_load(tidyverse, janitor, qgcomp, norm, mice, geepack)
+pacman::p_load(tidyverse, janitor, qgcomp, norm, mice, geepack, parallel)
 
 dat_loc <- "~/Documents/ope_ssis/data/"
 res<- "~/Documents/ope_ssis/result/"
 ```
 
-#SKIP UNTIL LINE 63 - which loads the imputed datasets from an R object
+#SKIP UNTIL LINE 93 - which loads the imputed datasets from an R object
 
 ```{r}
 dat<- read_csv(paste0(dat_loc, "analytic_set.csv")) |>
   select(-c(dnbp_postnatal_1_yr, dnbp_postnatal_2_yr)) #discussed with aimin and removing these observations as they have >85% obs below LOD
 ```
 
+
 #multiple imputation of exposures below LOD
 ```{r}
 #convert into long format by each visit
 dat_long <- dat |>
-  pivot_longer(cols = 2:13, names_to = "variable", values_to = "value") |>
-  separate(variable, into = c("chemical", "visit"), sep = "_") |>
+  pivot_longer(cols = 2:35, names_to = "variable", values_to = "value") |>
+  extract(variable, into = c("chemical", "visit"), regex = "([^_]+)_(.*)", remove = FALSE) |>
   pivot_wider(names_from = chemical, values_from = value)
 
+#========================================================#
 #split into 4 sets by each chemical for imputation
 #Split the dataframe into 4 sets
-dataframes <- lapply(41:44, function(position) { #position of exposure variables
-  variable_name <- colnames(dat_long)[position]  # Get the variable name at the specific position
-  new_df <- dat_long |>
-    select(1:40, position)  # position of outcome and covariates
-  return(new_df)
-})
 
+# Create a list to store the dataframes
+dataframes <- list()
+
+# Loop through each prefix and create a dataframe for each group
+for (prefix in c("bcep", "bdcipp", "dnbp", "dphp")) {
+  # Filter the dataframe based on the prefix
+  new_df <- dat_long %>%
+    filter(str_starts(variable, prefix)) %>%
+    select(-variable)  # Remove the variable column if needed
+  
+  # Drop variables that only contain NA values for all observations
+  new_df <- new_df[, apply(new_df, 2, function(x) any(!is.na(x)))]
+  
+  # Store the dataframe in the list
+  dataframes[[prefix]] <- new_df
+}
+
+#========================================================#
 # Assign the separate dataframes to individual objects
 list2env(setNames(dataframes, paste0("dat_", sapply(dataframes, function(df) tail(colnames(df), 1)))), .GlobalEnv)
 ```
 
+#remove not reported values due to interference
+```{r}
+dat_bcep<- drop_NR_interference(dat_bcep, "bcep")
+dat_dnbp<- drop_NR_interference(dat_dnbp, "dnbp")
+dat_dphp<- drop_NR_interference(dat_dphp, "dphp")
+dat_bdcipp<- drop_NR_interference(dat_bdcipp, "bdcipp")
+```
+#=======================================================#
+#n after dropping NR interference
+bcep = 219
+dnbp = 183 (7 time points only)
+dphp = 228
+bdcipp = 220
+#=======================================================#
+
 # generate imputed datasets
 ```{r}
-imputed_datasets <- create_imputed_datasets(dat_bcep, dat_dnbp, dat_dphp, dat_bdcipp)
+imputed_datasets <- generate_imputed_datasets(dat_bcep, dat_dnbp, dat_dphp, dat_bdcipp)
 # Access the imputed datasets
 imp_dat_bcep <- imputed_datasets[[1]]
 imp_dat_dnbp <- imputed_datasets[[2]]
@@ -66,47 +95,29 @@ save(imp_dat_bcep, imp_dat_bdcipp, imp_dat_dnbp, imp_dat_dphp,
 load(paste0(dat_loc, "opfr_imputed_objects.rda"))
 ```
 
-#save exposure-response association in rda files
-```{r}
-runGeeglm(datasets = c("imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp", "imp_dat_dphp"), 
-          covariates = c("gender", "child_race", "mat_age", "mari_st_p4", "mom_edu_p4_cat",
-                         "mid_income_p4", "cotinine" , "bdi_p4", "lead", "rfr_gs_t"),
-          outcome = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
-                      "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
-                      "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
-                      "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
-                      "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
-                      "int_raw_p", "as_raw_p"),
-          p_id="participant_id",
-          outputFolder = "~/Documents/ope_ssis/test")
-
-#~/Documents/ope_ssis/result/gee_mi_res
-#~/Documents/ope_ssis/test
-```
-
 #for testing
 ```{r}
 runGeeglmParallel(datasets = c("imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp", "imp_dat_dphp"), 
-          covariates = c("gender", "child_race", "mat_age", "mari_st_p4", "mom_edu_p4_cat",
-                         "mid_income_p4", "cotinine" , "bdi_p4", "lead", "rfr_gs_t"),
-          outcome = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
-                      "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
-                      "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
-                      "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
-                      "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
-                      "int_raw_p", "as_raw_p"),
-          outputFolder = "~/Documents/ope_ssis/test")
+                  covariates = c("gender", "child_race", "mat_age", "mari_st_p4", "mom_edu_p4_cat",
+                                 "mid_income_p4", "cotinine" , "bdi_p4", "lead", "rfr_gs_t"),
+                  outcome = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
+                              "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
+                              "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
+                              "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
+                              "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
+                              "int_raw_p", "as_raw_p"),
+                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_feb")
 ```
 
 ```{r}
-load("~/Documents/ope_ssis/test/imp_dat_bcep_as_raw_p_bcep.rda")
+load("~/Documents/ope_ssis/result/gee_mi_res_feb/imp_dat_bcep_as_raw_p_bcep.rda")
 x<-as_tibble(tidy(pool(fit), conf.int = TRUE))
 ```
 
 
 #get estimates as csv
 ```{r}
-extractGEEParallel(input_folder="~/Documents/ope_ssis/test", 
-                   output_folder= "~/Documents/ope_ssis/test")
+extractGEEParallel(input_folder="~/Documents/ope_ssis/result/gee_mi_res_feb", 
+                   output_folder= "~/Documents/ope_ssis/result/gee_mi_res_feb")
 ```
 
