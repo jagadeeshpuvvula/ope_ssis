@@ -7,7 +7,7 @@ output: pdf_document
 
 #function to create imputed datasets - leftcenslognorm imputation - 10 sets
 ```{r}
-create_imputed_datasets <- function(...) {
+generate_imputed_datasets <- function(...) {
   datasets <- list(...)
   imputed_datasets <- list()
 
@@ -16,7 +16,11 @@ create_imputed_datasets <- function(...) {
     variable_name <- deparse(substitute(dataset))  # Get the name of the dataframe object
 
     imputed_dataset <- dataset |>
-      mice(m = 10, method = "leftcenslognorm", maxit = 20, seed = 2023) |>
+      mice(m = 50, 
+           method = c(rep("", 40), "leftcenslognorm"), 
+           maxit = 20, 
+           seed = 2023,
+           lod=c(rep(NA, 40), 0.1)) |>
       clean_names()
 
     imputed_datasets[[i]] <- imputed_dataset
@@ -55,6 +59,18 @@ runGeeglm <- function(datasets, outcomes, outputFolder) {
     }
   }
 }
+```
+
+#for testing only
+```{r}
+runGeeglm(datasets = c("imp_dat_dphp","imp_dat_bcep", "imp_dat_bdcipp",  "imp_dat_dnbp"),
+                  outcomes = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
+                              "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
+                              "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
+                              "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
+                              "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
+                              "int_raw_p", "as_raw_p"),
+                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_feb/")
 ```
 
 #function to extract GEE estimates from rda objects
@@ -99,3 +115,117 @@ extractGEE <- function(input_folder, output_folder) {
   write_csv(data, output_file)
 }
 ```
+
+#geeglm parallel
+```{r}
+runGeeglmParallel<- function(datasets, outcomes, covariates, outputFolder) {
+  # Set the number of cores to use for parallel processing
+  num_cores <- detectCores()
+  
+  # Create a cluster for parallel processing
+  cl <- makeCluster(num_cores)
+  
+  # Parallelize the outer loop using mclapply
+  mclapply(datasets, function(dataset) {
+    # Extract the last part of the input data name
+    exposure <- tail(strsplit(dataset, "_")[[1]], 1)
+  
+    # Load the dataset
+    data <- get(dataset)
+  
+    # Iterate over each outcome
+    for (outcome in outcomes) {
+      # Construct the formula string for geeglm analysis
+      formula_str <- paste(outcome, "~ log(get(exposure))*visit +", paste(covariates, collapse = " + "))
+      
+      # Perform geeglm analysis
+      fit <- with(data, geeglm(formula(formula_str),
+                               id = participant_id, 
+                               family = "gaussian", 
+                               corstr = "independence"))
+    
+      # Save the output to the provided folder in RDA format
+      outputName <- paste(outputFolder, "/", dataset, "_", outcome, "_", exposure, ".rda", sep = "")
+      save(fit, file = outputName)
+    }
+  }, mc.cores = num_cores)
+  
+  # Stop the cluster
+  stopCluster(cl)
+}
+```
+
+#extract output from gee parallel
+```{r}
+extractGEEParallel<- function(input_folder, output_folder) {
+  # Get a list of RDA files in the input folder
+  rda_files <- list.files(input_folder, pattern = "\\.rda$", full.names = TRUE)
+  
+  # Initialize an empty dataframe to store the results
+  data <- data.frame()
+  
+  # Set the number of cores to use for parallel processing
+  num_cores <- detectCores()
+  
+  # Create a cluster for parallel processing
+  cl <- makeCluster(num_cores)
+  
+  # Parallelize the loop using mclapply
+  results <- mclapply(rda_files, function(file) {
+    # Load the RDA file
+    load(file)
+    
+    # Perform operations and extract required rows
+    extracted_data <- as_tibble(tidy(pool(fit), conf.int = TRUE)) |>
+      filter(grepl("log\\(get\\(exposure\\)\\)", term)) #results for exposure and exposure-visit interactions
+    
+    # Get the filename without path or extension
+    filename <- str_remove(basename(file), "\\.[^.]+$")
+    
+    # Trim the filename to remove the "imp_dat_" prefix
+    trimmed_filename <- str_remove(filename, "^imp_dat_")
+    
+    # Split the filename into exposure and outcome variables
+    split_strings <- str_split(trimmed_filename, "_")
+    exposure <- split_strings[[1]][1]
+    outcome <- paste(split_strings[[1]][2:(length(split_strings[[1]]) - 1)], collapse = "_")
+    
+    # Add the exposure and outcome variables
+    extracted_data$exposure <- exposure
+    extracted_data$outcome <- outcome
+    
+    return(extracted_data)
+  }, mc.cores = num_cores)
+  
+  # Stop the cluster
+  stopCluster(cl)
+  
+  # Bind the extracted data from all processes
+  data <- bind_rows(results)
+  
+  # Export the dataframe as a CSV to the output folder
+  output_file <- file.path(output_folder, "output.csv")
+  write_csv(data, output_file)
+}
+
+```
+
+
+drop NR dur to interference
+```{r}
+drop_NR_interference<- function(data, last_variable_name) {
+  # Identify rows where the last variable is equal to 9999.000
+  rows_to_drop <- which(data[[last_variable_name]] == 9999.000)
+  
+  # Get the participant_id corresponding to these rows
+  participant_ids_to_drop <- data$participant_id[rows_to_drop]
+  
+  # Drop all observations with the identified participant_id
+  data <- data[!(data$participant_id %in% participant_ids_to_drop), , drop = FALSE]
+  
+  # Return the modified data frame
+  return(data)
+}
+
+```
+
