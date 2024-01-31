@@ -9,7 +9,7 @@ output: pdf_document
 library(pacman)
 pacman::p_load(tidyverse, janitor, ggh4x)
 
-res<- "~/Documents/ope_ssis/test/"
+res<- "~/Documents/ope_ssis/result/gee_mi_res_feb/"
 ```
 
 #data prep for visualization
@@ -49,11 +49,8 @@ df_res<- read_csv(paste0(res, "output.csv")) |>
 ```
 
 ```{r}
-# Determine the number of repetitions needed
-n_repeats <- nrow(df_res) %/% 3
-
-# Create a sequence of indices for the repetitions
-repetition_indices <- rep(1:n_repeats, each = 3)
+sequence <- 1:918
+repetition_indices <- c(rep(sequence[1:54], each = 9), rep(sequence[55:81], each = 7), rep(sequence[82:108], each = 9))
 
 # Use group_by and summarize to calculate row sums for each group
 result <- df_res |>
@@ -65,12 +62,60 @@ result <- df_res |>
   ) |>
   ungroup() |>
   mutate(term = fct_recode(term,
-                            "BCEP-visit16W" = "BCEP",
-                            "BDCIPP-visit16W" = "BDCIPP",
-                            "DNBP-visit16W" = "DNBP",
-                            "DPHP-visit16W" = "DPHP"
-                            ))
-  #filter(str_detect(term, "-visit26W$|-visitBirth$"))
+                           "BCEP_Prenatal_16W" = "BCEP",
+                           "BCEP_Prenatal_26W" = "BCEP-visitprenatal_26W",
+                           "BCEP_Delivery" = "BCEP-visitdelivery",
+                           "BCEP_Postnatal_1_yr" = "BCEP-visitpostnatal_1_yr",
+                           "BCEP_Postnatal_2_yr" = "BCEP-visitpostnatal_2_yr",
+                           "BCEP_Postnatal_3_yr" = "BCEP-visitpostnatal_3_yr",
+                           "BCEP_Postnatal_4_yr" = "BCEP-visitpostnatal_4_yr",
+                           "BCEP_Postnatal_5_yr" = "BCEP-visitpostnatal_5_yr",
+                           "BCEP_Postnatal_8_yr" = "BCEP-visitpostnatal_8_yr",
+                           "BDCIPP_Prenatal_16W" = "BDCIPP",
+                           "BDCIPP_Prenatal_26W" = "BDCIPP-visitprenatal_26W",
+                           "BDCIPP_Delivery" = "BDCIPP-visitdelivery",
+                           "BDCIPP_Postnatal_1_yr" = "BDCIPP-visitpostnatal_1_yr",
+                           "BDCIPP_Postnatal_2_yr" = "BDCIPP-visitpostnatal_2_yr",
+                           "BDCIPP_Postnatal_3_yr" = "BDCIPP-visitpostnatal_3_yr",
+                           "BDCIPP_Postnatal_4_yr" = "BDCIPP-visitpostnatal_4_yr",
+                           "BDCIPP_Postnatal_5_yr" = "BDCIPP-visitpostnatal_5_yr",
+                           "BDCIPP_Postnatal_8_yr" = "BDCIPP-visitpostnatal_8_yr",
+                           "DPHP_Prenatal_16W" = "DPHP",
+                           "DPHP_Prenatal_26W" = "DPHP-visitprenatal_26W",
+                           "DPHP_Delivery" = "DPHP-visitdelivery",
+                           "DPHP_Postnatal_1_yr" = "DPHP-visitpostnatal_1_yr",
+                           "DPHP_Postnatal_2_yr" = "DPHP-visitpostnatal_2_yr",
+                           "DPHP_Postnatal_3_yr" = "DPHP-visitpostnatal_3_yr",
+                           "DPHP_Postnatal_4_yr" = "DPHP-visitpostnatal_4_yr",
+                           "DPHP_Postnatal_5_yr" = "DPHP-visitpostnatal_5_yr",
+                           "DPHP_Postnatal_8_yr" = "DPHP-visitpostnatal_8_yr",
+                           "DNBP_Prenatal_16W" = "DNBP",
+                           "DNBP_Prenatal_26W" = "DNBP-visitprenatal_26W",
+                           "DNBP_Delivery" = "DNBP-visitdelivery",
+                           "DNBP_Postnatal_3_yr" = "DNBP-visitpostnatal_3_yr",
+                           "DNBP_Postnatal_4_yr" = "DNBP-visitpostnatal_4_yr",
+                           "DNBP_Postnatal_5_yr" = "DNBP-visitpostnatal_5_yr",
+                           "DNBP_Postnatal_8_yr" = "DNBP-visitpostnatal_8_yr"
+                            )) |>
+  mutate(
+    chemical = str_extract(term, "^[^_]+"),
+    visit = str_remove(term, "^[^_]+_")
+  )
+```
+
+#reorder y axis levels
+```{r}
+result$visit <- factor(result$visit, levels = c(
+  "Prenatal_16W",
+  "Prenatal_26W",
+  "Delivery",
+  "Postnatal_1_yr",
+  "Postnatal_2_yr",
+  "Postnatal_3_yr",
+  "Postnatal_4_yr",
+  "Postnatal_5_yr",
+  "Postnatal_8_yr"
+))
 ```
 
 
@@ -78,11 +123,11 @@ result <- df_res |>
 ```{r}
 cbbPalette <- c("#D55E00", "#0072B2")
 
-ggplot(result, aes(y = fct_rev(term), x = estimate, xmin = conf_low, xmax = conf_high)) + 
+ggplot(result, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = conf_high)) + 
   geom_pointrange(aes(color = ifelse(conf_low <= 0 & conf_high >= 0, "Contains 0", "Doesn't contain 0")), 
                   position = position_dodge(width = 0.5), size = 0.6)+
   geom_vline(aes(xintercept = 0), linetype="dashed") + 
-  facet_nested(outcome_set ~ outcome_category+outcome_label, scales="free")+
+  facet_nested(outcome_set+chemical ~ outcome_category+outcome_label, scales="free")+
   scale_colour_manual(values=cbbPalette) +
   labs(y=NULL,
        x=expression(paste(beta[GEE-glm]," [95% CI]")),
@@ -95,19 +140,21 @@ ggplot(result, aes(y = fct_rev(term), x = estimate, xmin = conf_low, xmax = conf
         panel.grid.minor = element_blank(),
         text=element_text(size=10),
         axis.text = element_text(size = 10),
-        axis.text.x=element_text(size=10, angle = 45, hjust=1),
+        axis.text.x=element_text(size=10, angle = 45, hjust=0.8),
         axis.ticks.x=element_blank(),
         strip.text.x=element_text(size=7.5,angle=0),
         strip.text.y = element_text(size=10),
         strip.placement = "outside",
-        strip.background = element_rect(fill=NULL, colour = NULL))+
+        strip.background = element_rect(fill="transparent", colour = NULL),
+        panel.spacing.x = unit(0.1, "lines"),
+        panel.spacing.y = unit(0.1, "lines"))+
   guides(color="none")
 ```
 
 #export
 ```{r}
 ggsave(paste0(res, "gee_glm.tiff"), 
-       width = 14,height = 8,
+       width = 18,height = 10,
        dpi=300)
 ```
 
