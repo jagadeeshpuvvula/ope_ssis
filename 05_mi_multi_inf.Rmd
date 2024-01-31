@@ -27,7 +27,8 @@ dat<- read_csv(paste0(dat_loc, "analytic_set.csv")) |>
 dat_long <- dat |>
   pivot_longer(cols = 2:35, names_to = "variable", values_to = "value") |>
   extract(variable, into = c("chemical", "visit"), regex = "([^_]+)_(.*)", remove = FALSE) |>
-  pivot_wider(names_from = chemical, values_from = value)
+  pivot_wider(names_from = chemical, values_from = value) |>
+  mutate(visit = case_when(visit == "prenatal_16W" ~ "baseline", TRUE ~ visit))
 
 #========================================================#
 #split into 4 sets by each chemical for imputation
@@ -58,7 +59,7 @@ list2env(setNames(dataframes, paste0("dat_", sapply(dataframes, function(df) tai
 #remove not reported values due to interference
 ```{r}
 dat_bcep<- drop_NR_interference(dat_bcep, "bcep")
-dat_dnbp<- drop_NR_interference(dat_dnbp, "dnbp")
+dat_dnbp<- drop_NR_interference(dat_dnbp, "dnbp") 
 dat_dphp<- drop_NR_interference(dat_dphp, "dphp")
 dat_bdcipp<- drop_NR_interference(dat_bdcipp, "bdcipp")
 ```
@@ -97,10 +98,10 @@ load(paste0(dat_loc, "opfr_imputed_objects.rda"))
 
 #for testing
 ```{r}
-runGeeglmParallel(datasets = c("imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp", "imp_dat_dphp"), 
+runGeeglmParallel(datasets = c("imp_dat_dphp", "imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp"), 
                   covariates = c("gender", "child_race", "mat_age", "mari_st_p4", "mom_edu_p4_cat",
                                  "mid_income_p4", "cotinine" , "bdi_p4", "lead", "rfr_gs_t"),
-                  outcome = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
+                  outcomes = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
                               "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
                               "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
                               "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
@@ -110,7 +111,7 @@ runGeeglmParallel(datasets = c("imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp",
 ```
 
 ```{r}
-load("~/Documents/ope_ssis/result/gee_mi_res_feb/imp_dat_bcep_as_raw_p_bcep.rda")
+load("~/Documents/ope_ssis/result/gee_mi_res_feb/imp_dat_dphp_as_raw_p_dphp.rda")
 x<-as_tibble(tidy(pool(fit), conf.int = TRUE))
 ```
 
