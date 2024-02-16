@@ -5,6 +5,12 @@ date: "2023-12-13"
 output: pdf_document
 ---
 
+#load data
+```{r}
+dat_loc <- "~/Documents/ope_ssis/data/"
+df<- read_csv(paste0(dat_loc, "analytic_set.csv"))
+```
+
 #exp_dat from 01_exp_dat.rmd file line 87
 ```{r}
 missing_data <- ifelse(is.na(df[, 1:37]), "BelowLOD", ifelse(df[, 1:37] == 9999, "NR-interf", FALSE))
@@ -24,18 +30,23 @@ missing_data_long <- tidyr::pivot_longer(
 
 ```{r}
 # Define the desired order for y-axis labels
-custom_order <- c("bcep_prenatal_16W", "bcep_prenatal_26W", "bcep_delivery", "bcep_postnatal_1_yr", 
-                  "bcep_postnatal_2_yr", "bcep_postnatal_3_yr", "bcep_postnatal_4_yr", "bcep_postnatal_5_yr", "bcep_postnatal_8_yr",
-                  "bdcipp_prenatal_16W", "bdcipp_prenatal_26W", "bdcipp_delivery", "bdcipp_postnatal_1_yr", 
-                  "bdcipp_postnatal_2_yr", "bdcipp_postnatal_3_yr", "bdcipp_postnatal_4_yr", "bdcipp_postnatal_5_yr", "bdcipp_postnatal_8_yr",
-                  "dnbp_prenatal_16W", "dnbp_prenatal_26W", "dnbp_delivery", "dnbp_postnatal_1_yr", 
-                  "dnbp_postnatal_2_yr", "dnbp_postnatal_3_yr", "dnbp_postnatal_4_yr", "dnbp_postnatal_5_yr", "dnbp_postnatal_8_yr",
-                  "dphp_prenatal_16W", "dphp_prenatal_26W", "dphp_delivery", "dphp_postnatal_1_yr", 
-                  "dphp_postnatal_2_yr", "dphp_postnatal_3_yr", "dphp_postnatal_4_yr", "dphp_postnatal_5_yr", "dphp_postnatal_8_yr")
+custom_order <- c("BCEP-prenatal-16w", "BCEP-prenatal-26w", "BCEP-delivery", "BCEP-postnatal-1-yr", "BCEP-postnatal-2-yr", "BCEP-postnatal-3-yr", "BCEP-postnatal-4-yr", "BCEP-postnatal-5-yr", "BCEP-postnatal-8-yr", 
+"BDCIPP-prenatal-16w", "BDCIPP-prenatal-26w", "BDCIPP-delivery", "BDCIPP-postnatal-1-yr", "BDCIPP-postnatal-2-yr", "BDCIPP-postnatal-3-yr", "BDCIPP-postnatal-4-yr", "BDCIPP-postnatal-5-yr", "BDCIPP-postnatal-8-yr", 
+"DNBP-prenatal-16w", "DNBP-prenatal-26w", "DNBP-delivery", "DNBP-postnatal-1-yr", "DNBP-postnatal-2-yr", "DNBP-postnatal-3-yr", "DNBP-postnatal-4-yr", "DNBP-postnatal-5-yr", "DNBP-postnatal-8-yr", 
+"DPHP-prenatal-16w", "DPHP-prenatal-26w", "DPHP-delivery", "DPHP-postnatal-1-yr", "DPHP-postnatal-2-yr", "DPHP-postnatal-3-yr", "DPHP-postnatal-4-yr", "DPHP-postnatal-5-yr", "DPHP-postnatal-8-yr"
+)
 ```
 
 
 ```{r}
+#fixed labels
+transform_variable <- function(value) {
+  parts <- str_split(value, "_")[[1]]
+  parts <- c(toupper(parts[1]), tolower(parts[-1]))
+  parts <- gsub("([0-9]+)_([a-z]+)_([0-9]+)_([a-z]+)", "\\1-\\2-\\3-\\4", paste(parts, collapse = "-"))
+  return(paste(parts, collapse = "-"))
+}
+
 # Calculate percentage of missing values per variable
 missing_percentage <- missing_data_long |>
   filter(!is.na(Missing)) |>
@@ -44,31 +55,40 @@ missing_percentage <- missing_data_long |>
   group_by(Variables) |>
   mutate(Percentage = (Count / sum(Count)) * 100) |>
   filter(Missing == "BelowLOD") |>
-  arrange(desc(Percentage))
+  arrange(desc(Percentage)) |>
+  mutate(Variables = sapply(Variables, transform_variable))
 
 missing_data_long_filtered <- missing_data_long |>
-  filter(!is.na(Variables) & Variables != "participant_id") 
+  filter(!is.na(Variables) & Variables != "participant_id") |>
+  mutate(Variables = sapply(Variables, transform_variable)) |>
+  mutate(Missing = ifelse(Missing == "FALSE", "Detected", as.character(Missing)))|>
+  mutate(Missing = factor(Missing, levels = c("Detected", "BelowLOD", "NR-interf")))
+```
 
+```{r}
 # Remaining code for creating the heatmap with ggplot
-ggplot(missing_data_long_filtered, aes(x = Observations, y = Variables, fill = Missing)) +
-  geom_tile() +
-  scale_fill_manual(values = c("BelowLOD" = "royalblue", "NR-interf" = "red", "FALSE" = "gray90")) +
-  labs(title = "", x = "Study participants (n=236)", y = "Variables") +
+ggplot(missing_data_long_filtered, aes(x = Observations, y = factor(Variables, levels = rev(custom_order)), fill = Missing)) +
+  geom_tile(width = 1, height = 0.9)+
+  scale_y_discrete(expand = c(0, 0))+
+  scale_fill_manual(values = c("Detected" = "#56B4E9", "BelowLOD" = "#E69F00", "NR-interf" = "#D55E00")) +
+  labs(title = "", x = "Study participants (n=236)", y = "Urinary OPE metabolite measurements") +
   theme_bw() +
   theme(
     legend.position = "bottom",
     axis.text.x = element_blank(),  # Remove x-axis text
     axis.ticks.x = element_blank(),
+    axis.text.y = element_text(size=10),
     panel.border = element_blank(),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     axis.line = element_line(colour = "black"),
     legend.key.width = unit(0.8, "cm"),
-    legend.key.height = unit(0.3, "cm")
+    legend.key.height = unit(0.3, "cm"),
+    legend.title = element_blank()
   ) +
   guides(fill = guide_legend(direction = "horizontal",  title.hjust = 0.5, title="Below LOD")) +
-  scale_y_discrete(labels = function(x) paste0(x, " (", round(missing_percentage$Percentage[match(x, missing_percentage$Variables)], 1), "%)"))
-  #geom_hline(yintercept = 2.5, color = "black", size = 0.5) 
+  scale_y_discrete(labels = function(x) paste0(x, " (", round(missing_percentage$Percentage[match(x, missing_percentage$Variables)], 1), "%)"))+
+  geom_hline(yintercept = c(9.5, 18.5, 27.5, 36.5), color = "black", size = 0.8) 
 ```
 
 ```{r}
