@@ -1,0 +1,88 @@
+---
+title: "05.1_multiple_inf_sex_int"
+author: "Puvvula"
+date: "2024-02-16"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, qgcomp, norm, mice, geepack, parallel)
+
+dat_loc <- "~/Documents/ope_ssis/data/"
+res<- "~/Documents/ope_ssis/result/"
+```
+
+#load imputed datasets
+```{r}
+load(paste0(dat_loc, "opfr_imputed_objects.rda"))
+```
+
+#For child sex interaction term
+```{r}
+runGeeglmParallel(datasets = c("imp_dat_dphp", "imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp"), 
+                  covariates = c("child_race", "mat_age", "mari_st_p4", "mom_edu_p4_cat",
+                                 "mid_income_p4", "cotinine" , "bdi_p4", "lead", "rfr_gs_t"),
+                  outcomes = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
+                              "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
+                              "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
+                              "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
+                              "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
+                              "int_raw_p", "as_raw_p"),
+                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_feb/sex_interaction")
+```
+
+#get estimates as csv
+```{r}
+extractGEEParallel(input_folder="~/Documents/ope_ssis/result/gee_mi_res_feb/sex_interaction", 
+                   output_folder= "~/Documents/ope_ssis/result/gee_mi_res_feb/sex_interaction")
+```
+
+#get child sex p-value interaction table
+```{r}
+df_res<- read_csv(paste0(res, "gee_mi_res_feb/sex_interaction/output.csv")) |>
+  mutate(exposure = toupper(exposure),
+         term = case_when(
+           term == "log(get(exposure))" ~ as.character(exposure),
+           TRUE ~ paste0(as.character(exposure), "-", str_extract(term, "(?<=:)[^:]+$")))) |>
+  select(c(1,2,5:7,17)) |>
+  mutate(outcome_set = ifelse(grepl("p$", outcome), "Parent", "Child"),
+         outcome_label = factor(str_remove(outcome, "_[pc]$")),
+         outcome_label = fct_recode(outcome_label,
+                                    Social_skills_scale = "ss_std_score",
+                                    Communication = "com_raw",
+                                    Cooperation = "coop_raw",
+                                    Assertion = "assert_raw",
+                                    Responsibility = "res_raw",
+                                    Empathy = "emp_raw",
+                                    Engagement = "eng_raw",
+                                    Self_control = "self_raw",
+                                    Problem_behaviors_scale = "pb_std_score",
+                                    Externalizing = "ext_raw",
+                                    Bullying = "bul_raw",
+                                    Hyperactivity_inattention = "hyp_raw",
+                                    Internalizing = "int_raw",
+                                    Autism_spectrum = "as_raw"),
+         outcome_category = case_when(outcome_label %in% 
+                                        c("Communication", "Cooperation", "Assertion", 
+                                          "Responsibility", "Empathy", "Engagement", 
+                                          "Self_control", "Social_skills_scale") ~ "Social Skills",
+                                      TRUE ~ "Problem Behavior"),
+         across(where(is.numeric), ~ round(., 3)),
+         significance = ifelse(p.value < 0.1, "signf", "non_sign")) |>
+  clean_names() |>
+  filter(str_ends(term, "-genderMale")) |>
+  mutate(term = str_replace(term, "-genderMale", "")) |>
+  select(c(1, 3, 7, 8)) |>
+  spread(key = term, value = p_value) |>
+  select(outcome_set, outcome_label, everything())
+  #mutate(variable_id = paste(term, outcome_set, outcome_label, sep = "-"))
+```
+
+#export p-value interaction table
+```{r}
+write_csv(df_res, paste0(res, "gee_mi_res_feb/sex_interaction/sex_p_int_tbl.csv"))
+```
+
+
+
