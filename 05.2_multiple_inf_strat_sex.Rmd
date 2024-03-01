@@ -1,0 +1,177 @@
+---
+title: "05.2_multiple_inf_strat_sex"
+author: "Puvvula"
+date: "2024-03-01"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, qgcomp, norm, mice, geepack, parallel)
+
+dat_loc <- "~/Documents/ope_ssis/data/"
+res<- "~/Documents/ope_ssis/result/"
+```
+
+#load imputed datasets
+```{r}
+load(paste0(dat_loc, "opfr_imputed_objects.rda"))
+```
+
+#split imputed datasets by adolescent gender
+```{r}
+male_imp_dat_bcep<- filter(imp_dat_bcep, gender == "Male")
+female_imp_dat_bcep<- filter(imp_dat_bcep, gender == "Female")
+male_imp_dat_bdcipp<- filter(imp_dat_bdcipp, gender == "Male")
+female_imp_dat_bdcipp<- filter(imp_dat_bdcipp, gender == "Female")
+male_imp_dat_dnbp<- filter(imp_dat_dnbp, gender == "Male")
+female_imp_dat_dnbp<- filter(imp_dat_dnbp, gender == "Female")
+male_imp_dat_dphp<- filter(imp_dat_dphp, gender == "Male")
+female_imp_dat_dphp<- filter(imp_dat_dphp, gender == "Female")
+
+rm(imp_dat_bcep, imp_dat_bdcipp, imp_dat_dnbp, imp_dat_dphp)
+```
+
+#print names of stratified dataframes
+```{r}
+cat(paste0('"', ls()[grep("imp_dat", ls())], '"', collapse = ", "))
+
+```
+
+#for testing
+```{r}
+runGeeglmParallel(datasets = c("female_imp_dat_bcep", "female_imp_dat_bdcipp", "female_imp_dat_dnbp", "female_imp_dat_dphp", "male_imp_dat_bcep", "male_imp_dat_bdcipp", "male_imp_dat_dnbp", "male_imp_dat_dphp"), 
+                  covariates = c("child_race", "mat_age", "mari_st_p4", "mom_edu_p4_cat",
+                                 "mid_income_p4", "cotinine" , "bdi_p4", "lead", "rfr_gs_t"),
+                  outcomes = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
+                              "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
+                              "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
+                              "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
+                              "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
+                              "int_raw_p", "as_raw_p"),
+                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_feb/strata_sex")
+```
+
+```{r}
+load("~/Documents/ope_ssis/result/gee_mi_res_feb/strata_sex/female_imp_dat_dphp_as_raw_p_dphp.rda")
+x<-as_tibble(tidy(pool(fit), conf.int = TRUE))
+```
+
+
+#get estimates as csv
+```{r}
+extractGEEParallel(input_folder="~/Documents/ope_ssis/result/gee_mi_res_feb/strata_sex", 
+                          output_folder= "~/Documents/ope_ssis/result/gee_mi_res_feb/strata_sex")
+```
+
+#=============================================================================#
+#Preping results table
+```{r}
+df_res<- read_csv(paste0(res, "gee_mi_res_feb/strata_sex/output.csv")) |>
+  select(c(1,2,6,7,16)) |>
+  mutate(
+    gender = word(filename, 1, sep = "_"),
+    exposure = word(filename, -1, sep = "_"),
+    outcome = str_c(word(filename, 5, sep = "_"),
+                    word(filename, 6, sep = "_"),
+                    word(filename, 7, sep = "_"),
+                    sep = "_")
+  )|>
+  select(-filename)|>
+  mutate(exposure = toupper(exposure),
+         term = case_when(
+           term == "log(get(exposure))" ~ as.character(exposure),
+           TRUE ~ paste0(as.character(exposure), "-", str_extract(term, "(?<=:)[^:]+$")))) |>
+  #select(c(1,2,5:7,15:17)) |>
+  mutate(outcome_set = ifelse(grepl("p$", outcome), "Parent", "Child"),
+         outcome_label = factor(str_remove(outcome, "_[pc]$")),
+         outcome_label = fct_recode(outcome_label,
+                                    Social_skills_scale = "ss_std_score",
+                                    Communication = "com_raw",
+                                    Cooperation = "coop_raw",
+                                    Assertion = "assert_raw",
+                                    Responsibility = "res_raw",
+                                    Empathy = "emp_raw",
+                                    Engagement = "eng_raw",
+                                    Self_control = "self_raw",
+                                    Problem_behaviors_scale = "pb_std_score",
+                                    Externalizing = "ext_raw",
+                                    Bullying = "bul_raw",
+                                    Hyperactivity_inattention = "hyp_raw",
+                                    Internalizing = "int_raw",
+                                    Autism_spectrum = "as_raw"),
+         outcome_category = case_when(outcome_label %in% 
+                                        c("Communication", "Cooperation", "Assertion", 
+                                          "Responsibility", "Empathy", "Engagement", 
+                                          "Self_control", "Social_skills_scale") ~ "Social Skills",
+                                      TRUE ~ "Problem Behavior"),
+         across(where(is.numeric), ~ round(., 3))) |>
+  clean_names() 
+
+df_res_male<- df_res |> filter(gender=="male")
+df_res_female<- df_res |> filter(gender=="female")
+```
+
+```{r}
+sequence <- 1:918
+repetition_indices <- c(rep(sequence[1:54], each = 9), rep(sequence[55:81], each = 7), rep(sequence[82:108], each = 9))
+
+# Use group_by and summarize to calculate row sums for each group
+result_female <- df_res_female |>
+  group_by(repetition = repetition_indices) |>
+  mutate(
+    estimate = ifelse(row_number() != 1, estimate + first(estimate), estimate),
+    conf_low = ifelse(row_number() != 1, conf_low + first(conf_low), conf_low),
+    conf_high = ifelse(row_number() != 1, conf_high + first(conf_high), conf_high)
+  ) |>
+  ungroup() |>
+  mutate(term = fct_recode(term,
+                           "BCEP_Prenatal_16W" = "BCEP",
+                           "BCEP_Prenatal_26W" = "BCEP-visitprenatal_26W",
+                           "BCEP_Delivery" = "BCEP-visitdelivery",
+                           "BCEP_Postnatal_1_yr" = "BCEP-visitpostnatal_1_yr",
+                           "BCEP_Postnatal_2_yr" = "BCEP-visitpostnatal_2_yr",
+                           "BCEP_Postnatal_3_yr" = "BCEP-visitpostnatal_3_yr",
+                           "BCEP_Postnatal_4_yr" = "BCEP-visitpostnatal_4_yr",
+                           "BCEP_Postnatal_5_yr" = "BCEP-visitpostnatal_5_yr",
+                           "BCEP_Postnatal_8_yr" = "BCEP-visitpostnatal_8_yr",
+                           "BDCIPP_Prenatal_16W" = "BDCIPP",
+                           "BDCIPP_Prenatal_26W" = "BDCIPP-visitprenatal_26W",
+                           "BDCIPP_Delivery" = "BDCIPP-visitdelivery",
+                           "BDCIPP_Postnatal_1_yr" = "BDCIPP-visitpostnatal_1_yr",
+                           "BDCIPP_Postnatal_2_yr" = "BDCIPP-visitpostnatal_2_yr",
+                           "BDCIPP_Postnatal_3_yr" = "BDCIPP-visitpostnatal_3_yr",
+                           "BDCIPP_Postnatal_4_yr" = "BDCIPP-visitpostnatal_4_yr",
+                           "BDCIPP_Postnatal_5_yr" = "BDCIPP-visitpostnatal_5_yr",
+                           "BDCIPP_Postnatal_8_yr" = "BDCIPP-visitpostnatal_8_yr",
+                           "DPHP_Prenatal_16W" = "DPHP",
+                           "DPHP_Prenatal_26W" = "DPHP-visitprenatal_26W",
+                           "DPHP_Delivery" = "DPHP-visitdelivery",
+                           "DPHP_Postnatal_1_yr" = "DPHP-visitpostnatal_1_yr",
+                           "DPHP_Postnatal_2_yr" = "DPHP-visitpostnatal_2_yr",
+                           "DPHP_Postnatal_3_yr" = "DPHP-visitpostnatal_3_yr",
+                           "DPHP_Postnatal_4_yr" = "DPHP-visitpostnatal_4_yr",
+                           "DPHP_Postnatal_5_yr" = "DPHP-visitpostnatal_5_yr",
+                           "DPHP_Postnatal_8_yr" = "DPHP-visitpostnatal_8_yr",
+                           "DNBP_Prenatal_16W" = "DNBP",
+                           "DNBP_Prenatal_26W" = "DNBP-visitprenatal_26W",
+                           "DNBP_Delivery" = "DNBP-visitdelivery",
+                           "DNBP_Postnatal_3_yr" = "DNBP-visitpostnatal_3_yr",
+                           "DNBP_Postnatal_4_yr" = "DNBP-visitpostnatal_4_yr",
+                           "DNBP_Postnatal_5_yr" = "DNBP-visitpostnatal_5_yr",
+                           "DNBP_Postnatal_8_yr" = "DNBP-visitpostnatal_8_yr"
+                            )) |>
+  mutate(
+    chemical = str_extract(term, "^[^_]+"),
+    visit = str_remove(term, "^[^_]+_")
+  )
+```
+
+#join male and female results
+```{r}
+df_res_combined <- bind_rows(df_res_male, df_res_female)
+
+write_csv(df_res_combined, paste0(res, "gee_mi_res_feb/strata_sex/final_est_ci.csv"))
+```
+
+
