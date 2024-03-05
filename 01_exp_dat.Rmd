@@ -35,10 +35,10 @@ ope_exp <- bind_rows(ope_exp_n1, ope_exp_n2) |>
     visit == "Birth" ~ "delivery",
     visit == "12M" ~ "postnatal_1_yr",
     visit == "24M" ~ "postnatal_2_yr",
-    visit == "36M" ~ "postnatal_3_yr",
-    visit == "60M" ~ "postnatal_4_yr",
-    visit == "P3" ~ "postnatal_5_yr",
-    visit == "P4" ~ "postnatal_8_yr",
+    visit == "36M" ~ "postnatal_4_yr",
+    visit == "60M" ~ "postnatal_5_yr",
+    visit == "P3" ~ "postnatal_8_yr",
+    visit == "P4" ~ "postnatal_12_yr",
     TRUE ~ as.character(visit)
   ))
 ```

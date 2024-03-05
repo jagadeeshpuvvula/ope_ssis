@@ -1,0 +1,49 @@
+---
+title: "02.1_dag"
+author: "Puvvula"
+date: "2024-02-15"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+p_load(tidyverse, ggdag)
+```
+
+```{r}
+tidy_ggdag<- dagify(
+  out ~ exp ,
+  exp ~ race + edu + coti + cohort + city+ age + fish,
+  out ~ sex + age + HOME + pari + cohort+ city+ coti+ edu+ race + fish,
+  #sex ~ coti+ pari,
+  coti ~ race+ edu,
+  pari ~ race+ edu+ age ,
+  HOME ~ edu+ race,
+
+  exposure = "exp",
+  outcome = "out",
+  coords = list(x= c(exp= 3, out= 9, race= 4, edu= 5, age= 7,  
+                     pari= 7, fish= 8, coti= 3, sex= 9, HOME= 4, cohort= 7, city = 6),
+                y=c(exp= 2, out= 2, race= 6, edu= 3.5, age= 4,  pari= 6, fish =6,
+                    coti= 4, sex= 5.5, HOME= 8, cohort= 0, city = 0)),
+  labels = c("out" = "SSiS score",
+             "exp" = "OPE biomarkers",
+             "race" = "Race",
+             "edu" = "Maternal \neducation",
+             "age" = "Maternal \nage at \ndelivery",
+             "pari" = "Parity",
+             "coti" = "Cotinine",
+             "sex" = "Child \nsex",
+             "HOME" = "HOME \nscore",
+             "cohort" = "Cohort",
+             "city" = "City",
+             "U" = "Unmeasured \nconfounder",
+             "fish" = "Fish intake -\n1st trimester"))
+```
+
+```{r}
+tidy_ggdag |> ggdag_status(#controlling_for = c("coti", "HOME", "sex", "age", "pari", "race"),
+                               text=F, use_labels= "label", node = T) +
+  guides(color= "none", shape= "none") + theme_dag()
+
+```

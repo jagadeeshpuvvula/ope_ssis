@@ -1,0 +1,156 @@
+---
+title: "04_corr_descri_figs"
+author: "Puvvula"
+date: "2023-07-18"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, psych, reshape2, qgcomp, BlandAltmanLeh)
+
+dat_loc <- "~/Documents/ope_ssis/data/"
+res<- "~/Documents/ope_ssis/result/"
+```
+
+#data prep
+```{r}
+load(paste0(dat_loc, "opfr_imputed_objects.rda"))
+
+# List of datasets
+datasets <- list(bcep = imp_dat_bcep, bdcipp = imp_dat_bdcipp, dnbp = imp_dat_dnbp, dphp = imp_dat_dphp)
+
+# List to store results
+result_list <- list()
+
+# Loop through each dataset
+for (name in names(datasets)) {
+  # Apply the process to each dataset
+  result <- complete(datasets[[name]], "long") %>%
+    select(3, 42, 43) %>%
+    group_by(participant_id, visit) %>%
+    summarize(across(where(is.numeric), mean)) %>%
+    rename(value = 3) %>%
+    mutate(chemical = name)
+
+  # Append the result to the list
+  result_list[[name]] <- result
+}
+
+# Combine all results into a single dataframe
+combined_result <- bind_rows(result_list)
+rm(list = setdiff(ls(), "combined_result"))
+```
+
+#merge data
+```{r}
+combined_result_x<- combined_result|>
+  mutate(visit = recode(visit, "postnatal_8_yr" = "postnatal_12_yr"))|>
+  mutate(visit = recode(visit, "postnatal_5_yr" = "postnatal_8_yr")) |>
+  mutate(visit = recode(visit, "postnatal_4_yr" = "postnatal_5_yr")) |>
+  filter(visit != "postnatal_12_yr") |>
+  mutate(visit = recode(visit, "baseline" = "Prenatal_16w",
+                        "prenatal_26W" = "Prenatal_26w",
+                        "delivery" = "Delivery")) |>
+  mutate(visit = sub("^postnatal", "Child", visit)) |>
+  mutate(chemical = toupper(chemical)) |>
+  pivot_wider(names_from = c(chemical, visit), values_from = value)
+```
+
+#creating pairwise correlation matrix
+```{r}
+# Calculate Spearman correlation matrix
+cor_matrix <- cor(combined_result_x[,2:31], method = "spearman", use = "pairwise.complete.obs")
+cor_matrix_rnd <- round(cor_matrix, digits = 2)
+
+#mapping
+visit_mapping <- c(
+  "BCEP_Prenatal_16w", "BCEP_Prenatal_26w", "BCEP_Delivery", "BCEP_Child_1_yr", "BCEP_Child_2_yr", 
+  "BCEP_Child_3_yr", "BCEP_Child_5_yr", "BCEP_Child_8_yr",
+  "BDCIPP_Prenatal_16w", "BDCIPP_Prenatal_26w", "BDCIPP_Delivery", "BDCIPP_Child_1_yr", "BDCIPP_Child_2_yr", 
+  "BDCIPP_Child_3_yr", "BDCIPP_Child_5_yr", "BDCIPP_Child_8_yr",
+  "DNBP_Prenatal_16w", "DNBP_Prenatal_26w", "DNBP_Delivery", "DNBP_Child_1_yr", "DNBP_Child_2_yr", 
+  "DNBP_Child_3_yr",  "DNBP_Child_5_yr", "DNBP_Child_8_yr",
+  "DPHP_Prenatal_16w", "DPHP_Prenatal_26w", "DPHP_Delivery", "DPHP_Child_1_yr", "DPHP_Child_2_yr", 
+  "DPHP_Child_3_yr", "DPHP_Child_5_yr", "DPHP_Child_8_yr"
+)
+
+# Melt the correlation matrix for ggplot
+melted_cor_matrix <- melt(cor_matrix_rnd) |>
+  mutate_at(vars(Var1, Var2), ~factor(., levels = rev(visit_mapping)))
+```
+
+#visualizing spearman correlations
+```{r}
+ggplot(melted_cor_matrix, aes(x = Var2, y = Var1, fill = value, label=value)) + #, label = value
+  geom_tile(color = "white") +
+  geom_text(color = "black", size = 3, vjust = 1) +
+  scale_fill_gradient2(low = "red", high = "blue", mid = "white",
+                       midpoint = 0,
+                       limit = c(-1, 1), space = "Lab",
+                       name = "Spearman correlation coefficient") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 11, hjust = 1),
+        axis.text.y = element_text(angle = 0, vjust = 0.5, size = 11, hjust = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "bottom", legend.box = "horizontal") +
+  coord_fixed()+
+  geom_hline(yintercept = c(0, 8.5, 14.5, 22.5, 31.5), color = "black", size = 0.8) +
+  geom_vline(xintercept = c(0, 8.5, 14.5, 22.5, 31.5), color = "black", size = 0.8)
+
+ggsave(paste0(res, "opfr_correlation_heatmap.tiff"),
+       width=10, height= 10, dpi=300)
+```
+
+#ICC
+#split data
+```{r}
+chemicals <- c("BCEP", "BDCIPP", "DPHP", "DNBP")
+
+chemical_datasets <- map(chemicals, ~ combined_result_x |>
+                           select(starts_with(.x)) |>
+                           na.omit() |>
+                           as.matrix())
+
+names(chemical_datasets) <- chemicals
+list2env(chemical_datasets, envir = .GlobalEnv)
+```
+
+#interclass correlation function
+```{r}
+icc(DNBP[,2:7], model="twoway", type="consistency")
+
+#Child measurements only
+#bcep: 0.15 (0.12, 0.18); bdcipp: 0.23 (0.20, 0.26); dnbp: 0.00026 (-0.00017, 0.00073); dphp: 0.11 (0.086, 0.14)
+
+#pre and postnatal exposures:
+#bcep: 0.0031 (-0.049, 0.099); bdcipp: -0.012 (-0.05, 0.049); dnbp: -0.0644 (-0.117, 0.036); dphp: -0.004 (-0.041, 0.052)
+```
+
+#summary table
+```{r}
+#summary tbl
+summary_stats <- combined_result_x |>
+  pivot_longer(cols = -participant_id,
+               names_to = "variable",
+               values_to = "value") |>
+  group_by(variable)|>
+  summarise(
+    summary = sprintf("%.2f (%.2f, %.2f)",
+                      median(value, na.rm = TRUE),
+                      quantile(value, 0.25, na.rm = TRUE),
+                      quantile(value, 0.75, na.rm = TRUE))
+  )|>
+  mutate(chemical = sub("_.*", "", variable)) |>
+  mutate(visit = sub("^[^_]*_", "", variable)) |>
+  select(-variable) |>
+  pivot_wider(names_from = chemical, values_from = summary)
+
+write_csv(summary_stats, paste0(res, "opfr_summary_post_imp.csv"))
+```
+

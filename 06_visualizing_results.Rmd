@@ -96,11 +96,17 @@ result <- df_res |>
                            "DNBP_Postnatal_4_yr" = "DNBP-visitpostnatal_4_yr",
                            "DNBP_Postnatal_5_yr" = "DNBP-visitpostnatal_5_yr",
                            "DNBP_Postnatal_8_yr" = "DNBP-visitpostnatal_8_yr"
-                            )) |>
+                            ))  |>
+  filter(!str_detect(term, "Postnatal_8_yr$")) |>
+  mutate(term = str_replace(term, "(.*)Postnatal_5_yr$", "\\1Child_8_yr"))|>
+  mutate(term = str_replace(term, "(.*)Postnatal_4_yr$", "\\1Child_5_yr")) |>
+  mutate(term = str_replace(term, "(.*)Postnatal_4_yr$", "\\1Child_5_yr")) |>
+  mutate(term = str_replace(term, "Postnatal", "Child"))|>
   mutate(
     chemical = str_extract(term, "^[^_]+"),
     visit = str_remove(term, "^[^_]+_")
-  )
+  ) |>
+  mutate(outcome_set = recode(outcome_set, "Parent" = "Caregiver", "Child" = "Adolescent"))
 ```
 
 #reorder y axis levels
@@ -109,15 +115,13 @@ result$visit <- factor(result$visit, levels = c(
   "Prenatal_16W",
   "Prenatal_26W",
   "Delivery",
-  "Postnatal_1_yr",
-  "Postnatal_2_yr",
-  "Postnatal_3_yr",
-  "Postnatal_4_yr",
-  "Postnatal_5_yr",
-  "Postnatal_8_yr"
+  "Child_1_yr",
+  "Child_2_yr",
+  "Child_3_yr",
+  "Child_5_yr",
+  "Child_8_yr"
 ))
 ```
-
 
 # plot
 ```{r}
@@ -142,7 +146,7 @@ ggplot(result, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = con
         axis.text = element_text(size = 10),
         axis.text.x=element_text(size=10, angle = 45, hjust=0.8),
         axis.ticks.x=element_blank(),
-        strip.text.x=element_text(size=7.5,angle=0),
+        strip.text.x=element_text(size=7,angle=0),
         strip.text.y = element_text(size=10),
         strip.placement = "outside",
         strip.background = element_rect(fill="transparent", colour = NULL),
