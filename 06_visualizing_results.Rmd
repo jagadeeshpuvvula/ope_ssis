@@ -162,4 +162,116 @@ ggsave(paste0(res, "gee_glm.tiff"),
        dpi=300)
 ```
 
+#==============================================================================#
+#==============================================================================#
+#visualizing results stratified by sex
+```{r}
+sex_df<- read_csv(paste0(res, "/strata_sex/final_est_ci.csv")) |>
+  mutate(term = fct_recode(term,
+                           "BCEP_Prenatal_16W" = "BCEP",
+                           "BCEP_Prenatal_26W" = "BCEP-visitprenatal_26W",
+                           "BCEP_Delivery" = "BCEP-visitdelivery",
+                           "BCEP_Postnatal_1_yr" = "BCEP-visitpostnatal_1_yr",
+                           "BCEP_Postnatal_2_yr" = "BCEP-visitpostnatal_2_yr",
+                           "BCEP_Postnatal_3_yr" = "BCEP-visitpostnatal_3_yr",
+                           "BCEP_Postnatal_4_yr" = "BCEP-visitpostnatal_4_yr",
+                           "BCEP_Postnatal_5_yr" = "BCEP-visitpostnatal_5_yr",
+                           "BCEP_Postnatal_8_yr" = "BCEP-visitpostnatal_8_yr",
+                           "BDCIPP_Prenatal_16W" = "BDCIPP",
+                           "BDCIPP_Prenatal_26W" = "BDCIPP-visitprenatal_26W",
+                           "BDCIPP_Delivery" = "BDCIPP-visitdelivery",
+                           "BDCIPP_Postnatal_1_yr" = "BDCIPP-visitpostnatal_1_yr",
+                           "BDCIPP_Postnatal_2_yr" = "BDCIPP-visitpostnatal_2_yr",
+                           "BDCIPP_Postnatal_3_yr" = "BDCIPP-visitpostnatal_3_yr",
+                           "BDCIPP_Postnatal_4_yr" = "BDCIPP-visitpostnatal_4_yr",
+                           "BDCIPP_Postnatal_5_yr" = "BDCIPP-visitpostnatal_5_yr",
+                           "BDCIPP_Postnatal_8_yr" = "BDCIPP-visitpostnatal_8_yr",
+                           "DPHP_Prenatal_16W" = "DPHP",
+                           "DPHP_Prenatal_26W" = "DPHP-visitprenatal_26W",
+                           "DPHP_Delivery" = "DPHP-visitdelivery",
+                           "DPHP_Postnatal_1_yr" = "DPHP-visitpostnatal_1_yr",
+                           "DPHP_Postnatal_2_yr" = "DPHP-visitpostnatal_2_yr",
+                           "DPHP_Postnatal_3_yr" = "DPHP-visitpostnatal_3_yr",
+                           "DPHP_Postnatal_4_yr" = "DPHP-visitpostnatal_4_yr",
+                           "DPHP_Postnatal_5_yr" = "DPHP-visitpostnatal_5_yr",
+                           "DPHP_Postnatal_8_yr" = "DPHP-visitpostnatal_8_yr",
+                           "DNBP_Prenatal_16W" = "DNBP",
+                           "DNBP_Prenatal_26W" = "DNBP-visitprenatal_26W",
+                           "DNBP_Delivery" = "DNBP-visitdelivery",
+                           "DNBP_Postnatal_3_yr" = "DNBP-visitpostnatal_3_yr",
+                           "DNBP_Postnatal_4_yr" = "DNBP-visitpostnatal_4_yr",
+                           "DNBP_Postnatal_5_yr" = "DNBP-visitpostnatal_5_yr",
+                           "DNBP_Postnatal_8_yr" = "DNBP-visitpostnatal_8_yr"
+                            ))  |>
+  mutate(gender = fct_recode(gender, 
+                        "Male" = "male", 
+                        "Female" = "female")) |>
+  filter(!str_detect(term, "Postnatal_8_yr$")) |>
+  mutate(term = str_replace(term, "(.*)Postnatal_5_yr$", "\\1Child_8_yr"))|>
+  mutate(term = str_replace(term, "(.*)Postnatal_4_yr$", "\\1Child_5_yr"))  |>
+  mutate(term = str_replace(term, "Postnatal", "Child"))|>
+  mutate(
+    chemical = str_extract(term, "^[^_]+"),
+    visit = str_remove(term, "^[^_]+_")
+  ) |>
+  mutate(outcome_set = recode(outcome_set, "Parent" = "Caregiver", "Child" = "Adolescent"))
+
+sex_df_adole<- sex_df |> filter(outcome_set == "Adolescent")
+sex_df_care_giv<- sex_df |> filter(outcome_set == "Caregiver")
+```
+
+```{r}
+sex_df_care_giv$visit <- factor(sex_df_care_giv$visit, levels = c(
+  "Prenatal_16W",
+  "Prenatal_26W",
+  "Delivery",
+  "Child_1_yr",
+  "Child_2_yr",
+  "Child_3_yr",
+  "Child_5_yr",
+  "Child_8_yr"
+))
+```
+
+
+```{r}
+cbbPalette <- c("#D55E00", "#0072B2")
+
+ggplot(sex_df_care_giv, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = conf_high, shape= gender)) + 
+  geom_pointrange(aes(color = ifelse(conf_low <= 0 & conf_high >= 0, "Contains 0", "Doesn't contain 0")), 
+                  position = position_dodge(width = 0.8), size = 0.6)+
+  geom_vline(aes(xintercept = 0), linetype="dashed") + 
+  facet_nested(outcome_set+chemical ~ outcome_category+outcome_label, scales="free")+
+  scale_colour_manual(values=cbbPalette) +
+  labs(y=NULL,
+       x=expression(paste(beta[GEE-glm]," [95% CI]")),
+       title = "",
+       caption = "")+
+  theme_bw()+
+  theme(legend.position = "bottom", 
+        legend.box = "horizontal",
+        legend.margin = margin(t = -0.2, unit = "cm"),
+        axis.line = element_line(colour = "black"),
+        plot.title=element_text(size = 10, hjust = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text=element_text(size=10),
+        axis.text = element_text(size = 10),
+        axis.text.x=element_text(size=10, angle = 45, hjust=0.8),
+        axis.ticks.x=element_blank(),
+        strip.text.x=element_text(size=7,angle=0),
+        strip.text.y = element_text(size=10),
+        strip.placement = "outside",
+        strip.background = element_rect(fill="transparent", colour = NULL),
+        panel.spacing.x = unit(0.1, "lines"),
+        panel.spacing.y = unit(0.1, "lines"))+
+  guides(color="none")+
+  labs(shape = "Adolescent sex")
+```
+
+```{r}
+ggsave(paste0(res, "/strata_sex/caregiver_reported.tiff"), 
+       width = 18,height = 10,
+       dpi=300 )
+```
 

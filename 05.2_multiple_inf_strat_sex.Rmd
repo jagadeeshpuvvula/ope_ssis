@@ -71,12 +71,10 @@ df_res<- read_csv(paste0(res, "gee_mi_res_feb/strata_sex/output.csv")) |>
   select(c(1,2,6,7,16)) |>
   mutate(
     gender = word(filename, 1, sep = "_"),
-    exposure = word(filename, -1, sep = "_"),
-    outcome = str_c(word(filename, 5, sep = "_"),
-                    word(filename, 6, sep = "_"),
-                    word(filename, 7, sep = "_"),
-                    sep = "_")
+    exposure = word(filename, -1, sep = "_")
   )|>
+  mutate(filename = str_remove(filename, "^[^_]+_[^_]+_[^_]+_[^_]+_"))|>
+  mutate(outcome = str_remove(filename, "_[^_]+$"))|>
   select(-filename)|>
   mutate(exposure = toupper(exposure),
          term = case_when(
@@ -117,7 +115,7 @@ sequence <- 1:918
 repetition_indices <- c(rep(sequence[1:54], each = 9), rep(sequence[55:81], each = 7), rep(sequence[82:108], each = 9))
 
 # Use group_by and summarize to calculate row sums for each group
-result_female <- df_res_female |>
+result_male <- df_res_male |>
   group_by(repetition = repetition_indices) |>
   mutate(
     estimate = ifelse(row_number() != 1, estimate + first(estimate), estimate),
