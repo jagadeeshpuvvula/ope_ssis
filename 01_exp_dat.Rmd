@@ -15,115 +15,105 @@ res<- "~/Documents/ope_ssis/result/"
 
 #ope data - pre and post natal exposure data received from aimin on Dec 13, 2023
 ```{r}
-ope_exp_n1<- read_sas(paste0(dat_loc, "raw/dec_23_new_ver/ur_fr_sg_20210921.sas7bdat")) |>
-  clean_names() 
-  #|>filter(flg_nr == 0)
-
-#ope data - p4 visit
-
-ope_exp_n2<- read_sas(paste0(dat_loc, "raw/dec_23_new_ver/ur_fr_12y.sas7bdat")) |>
-  clean_names() 
-  # |> filter(flg_nr == 0)
-```
-
-#append longitudinal exposure data
-```{r}
-ope_exp <- bind_rows(ope_exp_n1, ope_exp_n2) |>
+ope_exp_raw<- read_sas(paste0(dat_loc, "raw/dec_23_new_ver/ur_fr_sg_20210921.sas7bdat")) |>
+  clean_names() |>
+  filter(!analyte_code %in% c("DBzP", "DCP", "TBBA", "BCPP", "iPPPP", "tBPPP"))|>
   mutate(visit = case_when(
     visit == "16W" ~ "prenatal_16W",
     visit == "26W" ~ "prenatal_26W",
     visit == "Birth" ~ "delivery",
     visit == "12M" ~ "postnatal_1_yr",
     visit == "24M" ~ "postnatal_2_yr",
-    visit == "36M" ~ "postnatal_4_yr",
+    visit == "36M" ~ "postnatal_3_yr",
     visit == "60M" ~ "postnatal_5_yr",
     visit == "P3" ~ "postnatal_8_yr",
     visit == "P4" ~ "postnatal_12_yr",
     TRUE ~ as.character(visit)
-  ))
-```
-
-#lod summaries
-```{r}
-bel_lod_summaries <- ope_exp |>
-  group_by(analyte_code, visit) |>
-  summarize(freq_bel_lod = sum(flg_lod == 1, na.rm = TRUE),
-            freq_NR_interference = sum(flg_nr == 1, na.rm = TRUE),
-            total_obs = n(),
-            pct_bel_lod = round((freq_bel_lod / total_obs) * 100, 2),
-            pct_NR_interference = round((freq_NR_interference / total_obs) * 100, 2)) |>
-  mutate(
-    freq_pct_bel_lod = paste0(freq_bel_lod, " (", pct_bel_lod, ")"),
-    freq_pct_NR_interference = paste0(freq_NR_interference, " (", pct_NR_interference, ")")
-  ) |>
-  select(-c(freq_bel_lod, freq_NR_interference, pct_bel_lod, pct_NR_interference))
-
-write_csv(bel_lod_summaries, paste0(res, "bel_lod_summaries.csv"))
-```
-
-#recoding exposure labels
-```{r}
-ope_exp_filtered<- ope_exp  |>
+  )) |>
   mutate(analyte_code = tolower(analyte_code),
-         specific_gravity = ifelse(specific_gravity == 1, specific_gravity + 0.0001, specific_gravity)) |>
+         specific_gravity = ifelse(specific_gravity == 1, specific_gravity + 0.0001, specific_gravity))|>
   mutate(analyte_code = fct_recode(as.factor(analyte_code), 
                              bcep = "bcetp", bdcipp = "bdcpp", 
-                             dnbp = "dbup", dphp = "dphp"))|>
+                             dnbp = "dbup", dphp = "dphp")) |>
+  select(-c(unit, comment, creat, barcode, barcode_creat, barcode_sg, 
+            flg_match_creat, code_nr, flg_match_sg, analyte_lod)) |>
+  mutate(flg_lod = if_else(is.na(flg_lod) | flg_lod != 1, 0, flg_lod),
+         flg_nr = if_else(is.na(flg_nr) | flg_nr != 1, 0, flg_nr))
+```
+
+# get median specific gravity per visit
+```{r}
+median_sg_by_visit <- ope_exp_raw |>
+  group_by(visit) |>
+  summarise(median_sg = median(specific_gravity, na.rm = TRUE))
+```
+
+#count participants by visit and ope metabolite
+```{r}
+participant_counts <- ope_exp_raw |>
   group_by(visit, analyte_code) |>
-  mutate(median_sg = median(specific_gravity, na.rm = TRUE)) |>
+  summarize(num_participants = n_distinct(participant_id)) |>
+  pivot_wider(names_from = visit, values_from = num_participants)
+```
+
+#find if there are duplicates
+```{r}
+duplicate_counts <- ope_exp_raw %>%
+  group_by(participant_id, visit, analyte_code) %>%
+  summarise(duplicate_count = n() ) %>%
+  filter(duplicate_count > 1)
+```
+
+# handling duplicates
+```{r}
+ope_exp_dist<- ope_exp_raw |>
+  group_by(participant_id, visit, analyte_code) |>
+  mutate(avg_result = mean(result)) |>
+  distinct(participant_id, visit, analyte_code, .keep_all = TRUE) |>
+  ungroup() |>
+  select(-result) |>
+  rename(result = avg_result)
+```
+
+#urine specific gravity standardization of OPE concentrations
+```{r}
+ope_sg_adj<- ope_exp_dist |>
+  left_join(median_sg_by_visit, by = "visit") |>
+  mutate(specific_gravity = if_else(is.na(specific_gravity), median_sg, specific_gravity))|>
   mutate(result_sg_adj= result * (median_sg - 1) / (specific_gravity - 1), na.rm=T,
          result_sg_adj = round(result_sg_adj, 3)) |>
-  ungroup() |>
-  select(-median_sg)
+  mutate(result_sg_adj = ifelse(flg_nr == 1, 9999, result_sg_adj))|> #observations with 9999 are NR due to interference
+  mutate(result_sg_adj = ifelse(flg_lod == 1, 8888, result_sg_adj)) #observations with 8888 are below LOD
 
+ope_sg_adj_wide<- ope_sg_adj |>
+  select(c(participant_id, visit, analyte_code, result_sg_adj)) |>
+  pivot_wider(id_cols = participant_id,
+              names_from = c(analyte_code, visit), 
+              values_from = result_sg_adj, 
+              values_fill = 7777) #observations with 7777 indicate unmeasured
+```
 
 #exposure summary - pre-imputation
-exp_summary <- ope_exp_filtered |>
-  group_by(analyte_code, visit) |>
-  summarize(freq_bel_lod = sum(flg_lod == 1, na.rm = TRUE),
-            total_obs = n(),
-            pct_bel_lod = round((freq_bel_lod / total_obs) * 100, 2),
-            median_iqr = paste(
-              round(quantile(result, 0.5, na.rm = TRUE), 2), "(", 
-              round(quantile(result, 0.25, na.rm = TRUE), 2), "-", 
-              round(quantile(result, 0.75, na.rm = TRUE), 2), ")"
-              ),
-            analyte_lod = first(analyte_lod))
-
+```{r}
+exp_summary <- ope_sg_adj %>%
+    group_by(analyte_code, visit) %>%
+    summarize(
+        median_iqr_pct_bel_lod_n = paste(
+            round(quantile(result_sg_adj[result_sg_adj <= 500], 0.5, na.rm = TRUE), 2), "(", 
+            round(quantile(result_sg_adj[result_sg_adj <= 500], 0.25, na.rm = TRUE), 2), "-", 
+            round(quantile(result_sg_adj[result_sg_adj <= 500], 0.75, na.rm = TRUE), 2), ")",
+            "[", 
+            round((sum(flg_lod == 1) / n()) * 100, 2), "%;",
+            n(), "]"
+        )
+    )
 
 write_csv(exp_summary, paste0(res, "exp_summary_pre_imp.csv"))
 ```
 
-#data prep for analytic set - removed observations not reported due to interference
-```{r}
-exp_dat <- ope_exp_filtered |>
-  filter(!analyte_code %in% c("dbzp", "dcp", "tbba", "bcpp", "ipppp", "tbppp")) |>
-  group_by(participant_id, analyte_code, visit, flg_nr) |>
-  summarise(result_sg_adj = mean(result_sg_adj, na.rm = TRUE), .groups = "drop") |>
-  group_by(participant_id, analyte_code, visit) |>
-  filter(!(n() > 1 && any(flg_nr == 1))) |>
-  filter(!(n() > 1 && all(flg_nr == 0) && all(is.na(result_sg_adj)))) |>
-  distinct(participant_id, analyte_code, visit, .keep_all = TRUE) |>
-  mutate(result_sg_adj = ifelse(flg_nr == 1, 9999, result_sg_adj)) |> #observations with 9999 are NR due to interference
-  select(-c(flg_nr)) |>
-  mutate(result_sg_adj = replace_na(result_sg_adj, NA)) |>
-  pivot_wider(id_cols = participant_id,
-              names_from = c(analyte_code, visit), 
-              values_from = result_sg_adj) 
-```
-
-#finding duplicates
-```{r}
-# Identify duplicates based on participant_id, analyte_code, and visit
-exp_dat|>
-  group_by(participant_id, analyte_code, visit) |>
-  summarise(n = n(), .groups = "drop") |>
-  filter(n > 1)
-```
-
 #export exposure data
 ```{r}
-write_csv(exp_dat, paste0(dat_loc, "exp_dat.csv"))
+write_csv(ope_sg_adj_wide, paste0(dat_loc, "exp_dat.csv"))
 ```
 
 
