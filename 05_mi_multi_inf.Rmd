@@ -17,15 +17,15 @@ res<- "~/Documents/ope_ssis/result/"
 
 ```{r}
 dat<- read_csv(paste0(dat_loc, "analytic_set.csv")) |>
+  mutate(across(2:33, ~ifelse(.x == 8888, NA, .x))) |>
   select(-c(dnbp_postnatal_1_yr, dnbp_postnatal_2_yr)) #discussed with aimin and removing these observations as they have >85% obs below LOD
 ```
-
 
 #multiple imputation of exposures below LOD
 ```{r}
 #convert into long format by each visit
 dat_long <- dat |>
-  pivot_longer(cols = 2:35, names_to = "variable", values_to = "value") |>
+  pivot_longer(cols = 2:31, names_to = "variable", values_to = "value") |>
   extract(variable, into = c("chemical", "visit"), regex = "([^_]+)_(.*)", remove = FALSE) |>
   pivot_wider(names_from = chemical, values_from = value) |>
   mutate(visit = case_when(visit == "prenatal_16W" ~ "baseline", TRUE ~ visit))
