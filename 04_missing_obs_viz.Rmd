@@ -9,17 +9,16 @@ output: pdf_document
 ```{r}
 dat_loc <- "~/Documents/ope_ssis/data/"
 df<- read_csv(paste0(dat_loc, "analytic_set.csv")) |>
-  rename_with(~ sub("postnatal_8_yr$", "postnatal_12_yr", .), ends_with("postnatal_8_yr")) |>
-  rename_with(~ sub("postnatal_5_yr$", "postnatal_8_yr", .), ends_with("postnatal_5_yr")) |>
-  rename_with(~ sub("postnatal_4_yr$", "postnatal_5_yr", .), ends_with("postnatal_4_yr"))|>
-  rename_at(vars(contains("postnatal_")), ~ str_replace(., "postnatal_", "Child-")) |>
-  select(-ends_with("Child-12_yr"))
+  rename_at(vars(contains("postnatal_")), ~ str_replace(., "postnatal_", "Child-")) 
 ```
 
 #exp_dat from 01_exp_dat.rmd file line 87
 ```{r}
-missing_data <- ifelse(is.na(df[, 1:33]), "BelowLOD", ifelse(df[, 1:37] == 9999, "NR-interf", FALSE))
-missing_data_df <- as.data.frame(missing_data)
+missing_data <- ifelse(df[, 1:33] == 9999, "NR-interference", 
+                       ifelse(df[, 1:33] == 8888, "Below_LOD", 
+                              ifelse(is.na(df[, 1:33]) | df[, 1:33] == 7777, "Unmeasured", FALSE)))
+
+missing_data_df <- as.data.frame(missing_data) 
 
 # Adding row numbers as a column
 missing_data_df$Observations <- seq_len(nrow(missing_data_df))
@@ -30,7 +29,8 @@ missing_data_long <- tidyr::pivot_longer(
   cols = -Observations,
   names_to = "Variables",
   values_to = "Missing"
-)
+) |>
+  mutate(Missing = ifelse(is.na(Missing), "Unmeasured", Missing))
 ```
 
 ```{r}
@@ -38,14 +38,16 @@ missing_data_long <- tidyr::pivot_longer(
 custom_order <- c(
   "BCEP-prenatal-16w", "BCEP-prenatal-26w", "BCEP-delivery", "BCEP-child-1-yr", "BCEP-child-2-yr", "BCEP-child-3-yr", 
    "BCEP-child-5-yr", "BCEP-child-8-yr", 
+  
   "BDCIPP-prenatal-16w", "BDCIPP-prenatal-26w", "BDCIPP-delivery", "BDCIPP-child-1-yr", "BDCIPP-child-2-yr", 
   "BDCIPP-child-3-yr", "BDCIPP-child-5-yr", "BDCIPP-child-8-yr", 
+  
   "DNBP-prenatal-16w", "DNBP-prenatal-26w", "DNBP-delivery", "DNBP-child-1-yr", "DNBP-child-2-yr", "DNBP-child-3-yr", 
    "DNBP-child-5-yr", "DNBP-child-8-yr", 
+  
   "DPHP-prenatal-16w", "DPHP-prenatal-26w", "DPHP-delivery", "DPHP-child-1-yr", "DPHP-child-2-yr", "DPHP-child-3-yr", 
    "DPHP-child-5-yr", "DPHP-child-8-yr"
 )
-
 ```
 
 
@@ -60,20 +62,25 @@ transform_variable <- function(value) {
 
 # Calculate percentage of missing values per variable
 missing_percentage <- missing_data_long |>
-  filter(!is.na(Missing)) |>
   group_by(Variables, Missing) |>
   summarize(Count = n()) |>
   group_by(Variables) |>
-  mutate(Percentage = (Count / sum(Count)) * 100) |>
-  filter(Missing == "BelowLOD") |>
+  mutate(Percentage = replace_na((Count / sum(Count)) * 100, 0)) |>
+  filter(Missing == "Below_LOD") |>
   arrange(desc(Percentage)) |>
   mutate(Variables = sapply(Variables, transform_variable))
+
+#manually adding metabolites detected among all
+write_csv(missing_percentage, "~/Documents/ope_ssis/result/missing_pct_for_fig.csv")
+missing_percentage<- read_csv("~/Documents/ope_ssis/result/missing_pct_for_fig.csv")
+##########
 
 missing_data_long_filtered <- missing_data_long |>
   filter(!is.na(Variables) & Variables != "participant_id") |>
   mutate(Variables = sapply(Variables, transform_variable)) |>
   mutate(Missing = ifelse(Missing == "FALSE", "Detected", as.character(Missing)))|>
-  mutate(Missing = factor(Missing, levels = c("Detected", "BelowLOD", "NR-interf")))
+  mutate(Missing = factor(Missing, levels = c("Detected", "Below_LOD", "NR-interference", "Unmeasured"))) |>
+  filter(Variables %in% custom_order)
 ```
 
 ```{r}
@@ -81,7 +88,8 @@ missing_data_long_filtered <- missing_data_long |>
 ggplot(missing_data_long_filtered, aes(x = Observations, y = factor(Variables, levels = rev(custom_order)), fill = Missing)) +
   geom_tile(width = 1, height = 0.9)+
   scale_y_discrete(expand = c(0, 0))+
-  scale_fill_manual(values = c("Detected" = "#56B4E9", "BelowLOD" = "#E69F00", "NR-interf" = "#D55E00")) +
+  scale_fill_manual(values = c("Detected" = "#0072B2", "Below_LOD" = "#E69F00", "NR-interference" = "#D55E00",
+                               "Unmeasured" = "#999999")) +
   labs(title = "", x = "Study participants (n=236)", y = "Urinary OPE metabolite measurements") +
   theme_bw() +
   theme(
@@ -97,7 +105,7 @@ ggplot(missing_data_long_filtered, aes(x = Observations, y = factor(Variables, l
     legend.key.height = unit(0.3, "cm"),
     legend.title = element_blank()
   ) +
-  guides(fill = guide_legend(direction = "horizontal",  title.hjust = 0.5, title="Below LOD")) +
+  guides(fill = guide_legend(direction = "horizontal",  title.hjust = 0.5, title="")) +
   scale_y_discrete(labels = function(x) paste0(x, " (", round(missing_percentage$Percentage[match(x, missing_percentage$Variables)], 1), "%)"))+
   geom_hline(yintercept = c(8.5, 16.5, 24.5, 32.5), color = "black", size = 0.8) 
 ```
