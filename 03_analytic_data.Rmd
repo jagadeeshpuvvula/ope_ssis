@@ -19,7 +19,7 @@ exp_dat<- read_csv(paste0(dat_loc, "exp_dat.csv"))
 out_cov<- read_csv(paste0(dat_loc, "out_cov.csv"))
 
 df<- full_join(exp_dat, out_cov, by="participant_id") |>
-  filter(if_any(38:64, ~ !is.na(.))) # drop observations if any outcome or covariates are missing
+  filter(if_any(34:60, ~ !is.na(.))) # drop observations if any outcome or covariates are missing
 
 write_csv(df, paste0(dat_loc, "analytic_set.csv"))
 ```
@@ -31,14 +31,18 @@ summary_stats<- df |>
   select(where(is.numeric)) |>
   pivot_longer(everything(), names_to = "metric", values_to = "value") |>
   group_by(metric) |>
-  summarize(Below_LOD = sum(is.na(value)),
-            pct_na = round(sum(is.na(value)/length(value)*100), 2), # fraction of observations to be imputed
-            NR_interference = sum(value == 9999, na.rm = TRUE),
-            NR_interference_pct = round((NR_interference / length(value)) * 100, 2),
+  summarize(NR_interference = paste(sum(value == 9999, na.rm = TRUE), "(", 
+                                    round((sum(value == 9999, na.rm = TRUE) / length(value)) * 100, 2), "%)"),
+            Below_LOD = paste(sum(value == 8888, na.rm = TRUE), "(", 
+                                    round((sum(value == 8888, na.rm = TRUE) / length(value)) * 100, 2), "%)"),
+            Unmeasured = paste(sum(value == 7777, na.rm = TRUE), "(", 
+                                    round((sum(value == 7777, na.rm = TRUE) / length(value)) * 100, 2), "%)"),
+            Reportable_values = paste(sum(value < 500, na.rm = TRUE), "(", 
+                                    round((sum(value <500, na.rm = TRUE) / length(value)) * 100, 2), "%)"),
             median_iqr = paste(
-              round(quantile(value[value != 9999], 0.5, na.rm = TRUE), 2), "(",
-              round(quantile(value[value != 9999], 0.25, na.rm = TRUE), 2), "-", 
-              round(quantile(value[value != 9999], 0.75, na.rm = TRUE), 2), ")"
+              round(quantile(value[value < 500], 0.5, na.rm = TRUE), 2), "(",
+              round(quantile(value[value < 500], 0.25, na.rm = TRUE), 2), "-", 
+              round(quantile(value[value < 500], 0.75, na.rm = TRUE), 2), ")"
               ))
 
 write_csv(summary_stats, paste0(res, "summary_analytic_dat.csv"))
