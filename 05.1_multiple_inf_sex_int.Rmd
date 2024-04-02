@@ -40,7 +40,7 @@ extractGEEParallel(input_folder="~/Documents/ope_ssis/result/gee_mi_res_feb/sex_
 
 #get child sex p-value interaction table
 ```{r}
-df_res<- read_csv(paste0(res, "gee_mi_res_feb/sex_interaction/output.csv")) |>
+df_res<- read_csv(paste0(res, "sex_interaction/output.csv")) |>
   mutate(exposure = toupper(exposure),
          term = case_when(
            term == "log(get(exposure))" ~ as.character(exposure),
@@ -81,7 +81,7 @@ df_res<- read_csv(paste0(res, "gee_mi_res_feb/sex_interaction/output.csv")) |>
 
 #export p-value interaction table
 ```{r}
-write_csv(df_res, paste0(res, "gee_mi_res_feb/sex_interaction/sex_p_int_tbl.csv"))
+write_csv(df_res, paste0(res, "sex_interaction/sex_p_int_tbl.csv"))
 ```
 
 
