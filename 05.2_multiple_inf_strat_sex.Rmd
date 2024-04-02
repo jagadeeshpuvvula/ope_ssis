@@ -49,7 +49,7 @@ runGeeglmParallel(datasets = c("female_imp_dat_bcep", "female_imp_dat_bdcipp", "
                               "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
                               "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
                               "int_raw_p", "as_raw_p"),
-                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_feb/strata_sex")
+                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_march/strata_sex")
 ```
 
 ```{r}
@@ -60,30 +60,29 @@ x<-as_tibble(tidy(pool(fit), conf.int = TRUE))
 
 #get estimates as csv
 ```{r}
-extractGEEParallel(input_folder="~/Documents/ope_ssis/result/gee_mi_res_feb/strata_sex", 
-                          output_folder= "~/Documents/ope_ssis/result/gee_mi_res_feb/strata_sex")
+extractGEEParallel(input_folder="~/Documents/ope_ssis/result/gee_mi_res_march/strata_sex", 
+                          output_folder= "~/Documents/ope_ssis/result/gee_mi_res_march/strata_sex")
 ```
 
 #=============================================================================#
 #Preping results table
 ```{r}
-df_res<- read_csv(paste0(res, "gee_mi_res_feb/strata_sex/output.csv")) |>
-  select(c(1,2,6,7,16)) |>
+df_res<- read_csv(paste0(res, "gee_mi_res_march/strata_sex/output.csv")) |>
+  select(c(1,2,6,7,16,17)) |>
   mutate(
-    gender = word(filename, 1, sep = "_"),
-    exposure = word(filename, -1, sep = "_")
-  )|>
-  mutate(filename = str_remove(filename, "^[^_]+_[^_]+_[^_]+_[^_]+_"))|>
-  mutate(outcome = str_remove(filename, "_[^_]+$"))|>
-  select(-filename)|>
-  mutate(exposure = toupper(exposure),
-         term = case_when(
+    gender = exposure,
+    file_name = str_replace(outcome, "^imp_dat_", ""),
+    exposure = str_extract(file_name, "^[^_]+") |> toupper(),
+    file_name = str_remove(file_name, "^[^_]+_"),
+    outcome_set = case_when(str_detect(file_name, "p$") ~ "Caregiver",
+                            str_detect(file_name, "c$") ~ "Adolescent",
+                            TRUE ~ NA_character_),
+    outcome = str_remove(file_name, "_[cp]$"),
+    term = case_when(
            term == "log(get(exposure))" ~ as.character(exposure),
            TRUE ~ paste0(as.character(exposure), "-", str_extract(term, "(?<=:)[^:]+$")))) |>
-  #select(c(1,2,5:7,15:17)) |>
-  mutate(outcome_set = ifelse(grepl("p$", outcome), "Parent", "Child"),
-         outcome_label = factor(str_remove(outcome, "_[pc]$")),
-         outcome_label = fct_recode(outcome_label,
+  select(-c(file_name)) |>
+  mutate(outcome_label = fct_recode(outcome,
                                     Social_skills_scale = "ss_std_score",
                                     Communication = "com_raw",
                                     Cooperation = "coop_raw",
@@ -98,7 +97,7 @@ df_res<- read_csv(paste0(res, "gee_mi_res_feb/strata_sex/output.csv")) |>
                                     Hyperactivity_inattention = "hyp_raw",
                                     Internalizing = "int_raw",
                                     Autism_spectrum = "as_raw"),
-         outcome_category = case_when(outcome_label %in% 
+         outcome_category = case_when(outcome %in% 
                                         c("Communication", "Cooperation", "Assertion", 
                                           "Responsibility", "Empathy", "Engagement", 
                                           "Self_control", "Social_skills_scale") ~ "Social Skills",
@@ -111,11 +110,11 @@ df_res_female<- df_res |> filter(gender=="female")
 ```
 
 ```{r}
-sequence <- 1:918
-repetition_indices <- c(rep(sequence[1:54], each = 9), rep(sequence[55:81], each = 7), rep(sequence[82:108], each = 9))
+sequence <- 1:810
+repetition_indices <- c(rep(sequence[1:54], each = 8), rep(sequence[55:81], each = 6), rep(sequence[82:108], each = 8))
 
 # Use group_by and summarize to calculate row sums for each group
-result_male <- df_res_male |>
+result_female <- df_res_female |>
   group_by(repetition = repetition_indices) |>
   mutate(
     estimate = ifelse(row_number() != 1, estimate + first(estimate), estimate),
@@ -130,46 +129,50 @@ result_male <- df_res_male |>
                            "BCEP_Postnatal_1_yr" = "BCEP-visitpostnatal_1_yr",
                            "BCEP_Postnatal_2_yr" = "BCEP-visitpostnatal_2_yr",
                            "BCEP_Postnatal_3_yr" = "BCEP-visitpostnatal_3_yr",
-                           "BCEP_Postnatal_4_yr" = "BCEP-visitpostnatal_4_yr",
                            "BCEP_Postnatal_5_yr" = "BCEP-visitpostnatal_5_yr",
                            "BCEP_Postnatal_8_yr" = "BCEP-visitpostnatal_8_yr",
+                           
                            "BDCIPP_Prenatal_16W" = "BDCIPP",
                            "BDCIPP_Prenatal_26W" = "BDCIPP-visitprenatal_26W",
                            "BDCIPP_Delivery" = "BDCIPP-visitdelivery",
                            "BDCIPP_Postnatal_1_yr" = "BDCIPP-visitpostnatal_1_yr",
                            "BDCIPP_Postnatal_2_yr" = "BDCIPP-visitpostnatal_2_yr",
                            "BDCIPP_Postnatal_3_yr" = "BDCIPP-visitpostnatal_3_yr",
-                           "BDCIPP_Postnatal_4_yr" = "BDCIPP-visitpostnatal_4_yr",
                            "BDCIPP_Postnatal_5_yr" = "BDCIPP-visitpostnatal_5_yr",
                            "BDCIPP_Postnatal_8_yr" = "BDCIPP-visitpostnatal_8_yr",
+                           
                            "DPHP_Prenatal_16W" = "DPHP",
                            "DPHP_Prenatal_26W" = "DPHP-visitprenatal_26W",
                            "DPHP_Delivery" = "DPHP-visitdelivery",
                            "DPHP_Postnatal_1_yr" = "DPHP-visitpostnatal_1_yr",
                            "DPHP_Postnatal_2_yr" = "DPHP-visitpostnatal_2_yr",
                            "DPHP_Postnatal_3_yr" = "DPHP-visitpostnatal_3_yr",
-                           "DPHP_Postnatal_4_yr" = "DPHP-visitpostnatal_4_yr",
                            "DPHP_Postnatal_5_yr" = "DPHP-visitpostnatal_5_yr",
                            "DPHP_Postnatal_8_yr" = "DPHP-visitpostnatal_8_yr",
+                           
                            "DNBP_Prenatal_16W" = "DNBP",
                            "DNBP_Prenatal_26W" = "DNBP-visitprenatal_26W",
                            "DNBP_Delivery" = "DNBP-visitdelivery",
                            "DNBP_Postnatal_3_yr" = "DNBP-visitpostnatal_3_yr",
-                           "DNBP_Postnatal_4_yr" = "DNBP-visitpostnatal_4_yr",
                            "DNBP_Postnatal_5_yr" = "DNBP-visitpostnatal_5_yr",
                            "DNBP_Postnatal_8_yr" = "DNBP-visitpostnatal_8_yr"
-                            )) |>
+                            ))  |>
+  mutate(term = str_replace(term, "(.*)Postnatal_8_yr$", "\\1Child_8_yr"))|>
+  mutate(term = str_replace(term, "(.*)Postnatal_5_yr$", "\\1Child_5_yr")) |>
+  mutate(term = str_replace(term, "(.*)Postnatal_3_yr$", "\\1Child_3_yr")) |>
+  mutate(term = str_replace(term, "Postnatal", "Child"))|>
   mutate(
     chemical = str_extract(term, "^[^_]+"),
     visit = str_remove(term, "^[^_]+_")
-  )
+  ) |>
+  mutate(outcome_set = recode(outcome_set, "Parent" = "Caregiver", "Child" = "Adolescent"))
 ```
 
 #join male and female results
 ```{r}
-df_res_combined <- bind_rows(df_res_male, df_res_female)
+df_res_combined <- bind_rows(result_male, result_female)
 
-write_csv(df_res_combined, paste0(res, "gee_mi_res_feb/strata_sex/final_est_ci.csv"))
+write_csv(df_res_combined, paste0(res, "gee_mi_res_march/strata_sex/final_est_ci.csv"))
 ```
 
 
