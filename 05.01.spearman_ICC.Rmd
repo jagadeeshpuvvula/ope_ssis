@@ -43,16 +43,19 @@ rm(list = setdiff(ls(), "combined_result"))
 ```
 
 #merge data
+#log10 transformed
 ```{r}
-combined_result_x<- combined_result|>
-  mutate(visit = recode(visit, "postnatal_8_yr" = "postnatal_12_yr"))|>
-  mutate(visit = recode(visit, "postnatal_5_yr" = "postnatal_8_yr")) |>
-  mutate(visit = recode(visit, "postnatal_4_yr" = "postnatal_5_yr")) |>
-  filter(visit != "postnatal_12_yr") |>
+combined_result_x<- combined_result |>
+  mutate(value = ifelse(value > 5000, NA, value)) |>
+  mutate(value= log10(value)) |>
   mutate(visit = recode(visit, "baseline" = "Prenatal_16w",
                         "prenatal_26W" = "Prenatal_26w",
-                        "delivery" = "Delivery")) |>
-  mutate(visit = sub("^postnatal", "Child", visit)) |>
+                        "delivery" = "Delivery",
+                        "postnatal_1_yr"= "Child_1_yr",
+                        "postnatal_2_yr" = "Child_2_yr",
+                        "postnatal_3_yr" = "Child_3_yr",
+                        "postnatal_5_yr" = "Child_5_yr",
+                        "postnatal_8_yr" = "Child_8_yr")) |>
   mutate(chemical = toupper(chemical)) |>
   pivot_wider(names_from = c(chemical, visit), values_from = value)
 ```
@@ -110,26 +113,18 @@ ggsave(paste0(res, "opfr_correlation_heatmap.tiff"),
 #ICC
 #split data
 ```{r}
-chemicals <- c("BCEP", "BDCIPP", "DPHP", "DNBP")
+p_load(lme4, performance, broom, gt, apaTables, haven, psych)
 
-chemical_datasets <- map(chemicals, ~ combined_result_x |>
-                           select(starts_with(.x)) |>
-                           na.omit() |>
-                           as.matrix())
+x<- combined_result |>
+  mutate(value = ifelse(value > 5000, NA, value)) |>
+  filter(chemical == "dphp")
 
-names(chemical_datasets) <- chemicals
-list2env(chemical_datasets, envir = .GlobalEnv)
+# model 1
+model1 <- lmer(value ~ visit + (1 | participant_id), data=x)
+
+performance::icc(model1)
 ```
 
-#interclass correlation function
-```{r}
-icc(DNBP[,2:7], model="twoway", type="consistency")
-
-#Child measurements only
-#bcep: 0.15 (0.12, 0.18); bdcipp: 0.23 (0.20, 0.26); dnbp: 0.00026 (-0.00017, 0.00073); dphp: 0.11 (0.086, 0.14)
-
-#pre and postnatal exposures:
-#bcep: 0.0031 (-0.049, 0.099); bdcipp: -0.012 (-0.05, 0.049); dnbp: -0.0644 (-0.117, 0.036); dphp: -0.004 (-0.041, 0.052)
 ```
 
 #summary table
