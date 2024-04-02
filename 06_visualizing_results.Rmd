@@ -9,7 +9,7 @@ output: pdf_document
 library(pacman)
 pacman::p_load(tidyverse, janitor, ggh4x)
 
-res<- "~/Documents/ope_ssis/result/gee_mi_res_feb/"
+res<- "~/Documents/ope_ssis/result/gee_mi_res_march/"
 ```
 
 #data prep for visualization
@@ -49,8 +49,8 @@ df_res<- read_csv(paste0(res, "output.csv")) |>
 ```
 
 ```{r}
-sequence <- 1:918
-repetition_indices <- c(rep(sequence[1:54], each = 9), rep(sequence[55:81], each = 7), rep(sequence[82:108], each = 9))
+sequence <- 1:810
+repetition_indices <- c(rep(sequence[1:54], each = 8), rep(sequence[55:81], each = 6), rep(sequence[82:108], each = 8))
 
 # Use group_by and summarize to calculate row sums for each group
 result <- df_res |>
@@ -68,39 +68,37 @@ result <- df_res |>
                            "BCEP_Postnatal_1_yr" = "BCEP-visitpostnatal_1_yr",
                            "BCEP_Postnatal_2_yr" = "BCEP-visitpostnatal_2_yr",
                            "BCEP_Postnatal_3_yr" = "BCEP-visitpostnatal_3_yr",
-                           "BCEP_Postnatal_4_yr" = "BCEP-visitpostnatal_4_yr",
                            "BCEP_Postnatal_5_yr" = "BCEP-visitpostnatal_5_yr",
                            "BCEP_Postnatal_8_yr" = "BCEP-visitpostnatal_8_yr",
+                           
                            "BDCIPP_Prenatal_16W" = "BDCIPP",
                            "BDCIPP_Prenatal_26W" = "BDCIPP-visitprenatal_26W",
                            "BDCIPP_Delivery" = "BDCIPP-visitdelivery",
                            "BDCIPP_Postnatal_1_yr" = "BDCIPP-visitpostnatal_1_yr",
                            "BDCIPP_Postnatal_2_yr" = "BDCIPP-visitpostnatal_2_yr",
                            "BDCIPP_Postnatal_3_yr" = "BDCIPP-visitpostnatal_3_yr",
-                           "BDCIPP_Postnatal_4_yr" = "BDCIPP-visitpostnatal_4_yr",
                            "BDCIPP_Postnatal_5_yr" = "BDCIPP-visitpostnatal_5_yr",
                            "BDCIPP_Postnatal_8_yr" = "BDCIPP-visitpostnatal_8_yr",
+                           
                            "DPHP_Prenatal_16W" = "DPHP",
                            "DPHP_Prenatal_26W" = "DPHP-visitprenatal_26W",
                            "DPHP_Delivery" = "DPHP-visitdelivery",
                            "DPHP_Postnatal_1_yr" = "DPHP-visitpostnatal_1_yr",
                            "DPHP_Postnatal_2_yr" = "DPHP-visitpostnatal_2_yr",
                            "DPHP_Postnatal_3_yr" = "DPHP-visitpostnatal_3_yr",
-                           "DPHP_Postnatal_4_yr" = "DPHP-visitpostnatal_4_yr",
                            "DPHP_Postnatal_5_yr" = "DPHP-visitpostnatal_5_yr",
                            "DPHP_Postnatal_8_yr" = "DPHP-visitpostnatal_8_yr",
+                           
                            "DNBP_Prenatal_16W" = "DNBP",
                            "DNBP_Prenatal_26W" = "DNBP-visitprenatal_26W",
                            "DNBP_Delivery" = "DNBP-visitdelivery",
                            "DNBP_Postnatal_3_yr" = "DNBP-visitpostnatal_3_yr",
-                           "DNBP_Postnatal_4_yr" = "DNBP-visitpostnatal_4_yr",
                            "DNBP_Postnatal_5_yr" = "DNBP-visitpostnatal_5_yr",
                            "DNBP_Postnatal_8_yr" = "DNBP-visitpostnatal_8_yr"
                             ))  |>
-  filter(!str_detect(term, "Postnatal_8_yr$")) |>
-  mutate(term = str_replace(term, "(.*)Postnatal_5_yr$", "\\1Child_8_yr"))|>
-  mutate(term = str_replace(term, "(.*)Postnatal_4_yr$", "\\1Child_5_yr")) |>
-  mutate(term = str_replace(term, "(.*)Postnatal_4_yr$", "\\1Child_5_yr")) |>
+  mutate(term = str_replace(term, "(.*)Postnatal_8_yr$", "\\1Child_8_yr"))|>
+  mutate(term = str_replace(term, "(.*)Postnatal_5_yr$", "\\1Child_5_yr")) |>
+  mutate(term = str_replace(term, "(.*)Postnatal_3_yr$", "\\1Child_3_yr")) |>
   mutate(term = str_replace(term, "Postnatal", "Child"))|>
   mutate(
     chemical = str_extract(term, "^[^_]+"),
@@ -108,6 +106,13 @@ result <- df_res |>
   ) |>
   mutate(outcome_set = recode(outcome_set, "Parent" = "Caregiver", "Child" = "Adolescent"))
 ```
+
+```{r}
+write_csv(result, paste0(res, "output_summary.csv"))
+
+x<- result |> filter(chemical =="DPHP", outcome_label == "Hyperactivity_inattention", visit == "Prenatal_16W", outcome_set == "Caregiver")
+```
+
 
 #reorder y axis levels
 ```{r}
@@ -166,60 +171,39 @@ ggsave(paste0(res, "gee_glm.tiff"),
 #==============================================================================#
 #visualizing results stratified by sex
 ```{r}
-sex_df<- read_csv(paste0(res, "/strata_sex/final_est_ci.csv")) |>
-  mutate(term = fct_recode(term,
-                           "BCEP_Prenatal_16W" = "BCEP",
-                           "BCEP_Prenatal_26W" = "BCEP-visitprenatal_26W",
-                           "BCEP_Delivery" = "BCEP-visitdelivery",
-                           "BCEP_Postnatal_1_yr" = "BCEP-visitpostnatal_1_yr",
-                           "BCEP_Postnatal_2_yr" = "BCEP-visitpostnatal_2_yr",
-                           "BCEP_Postnatal_3_yr" = "BCEP-visitpostnatal_3_yr",
-                           "BCEP_Postnatal_4_yr" = "BCEP-visitpostnatal_4_yr",
-                           "BCEP_Postnatal_5_yr" = "BCEP-visitpostnatal_5_yr",
-                           "BCEP_Postnatal_8_yr" = "BCEP-visitpostnatal_8_yr",
-                           "BDCIPP_Prenatal_16W" = "BDCIPP",
-                           "BDCIPP_Prenatal_26W" = "BDCIPP-visitprenatal_26W",
-                           "BDCIPP_Delivery" = "BDCIPP-visitdelivery",
-                           "BDCIPP_Postnatal_1_yr" = "BDCIPP-visitpostnatal_1_yr",
-                           "BDCIPP_Postnatal_2_yr" = "BDCIPP-visitpostnatal_2_yr",
-                           "BDCIPP_Postnatal_3_yr" = "BDCIPP-visitpostnatal_3_yr",
-                           "BDCIPP_Postnatal_4_yr" = "BDCIPP-visitpostnatal_4_yr",
-                           "BDCIPP_Postnatal_5_yr" = "BDCIPP-visitpostnatal_5_yr",
-                           "BDCIPP_Postnatal_8_yr" = "BDCIPP-visitpostnatal_8_yr",
-                           "DPHP_Prenatal_16W" = "DPHP",
-                           "DPHP_Prenatal_26W" = "DPHP-visitprenatal_26W",
-                           "DPHP_Delivery" = "DPHP-visitdelivery",
-                           "DPHP_Postnatal_1_yr" = "DPHP-visitpostnatal_1_yr",
-                           "DPHP_Postnatal_2_yr" = "DPHP-visitpostnatal_2_yr",
-                           "DPHP_Postnatal_3_yr" = "DPHP-visitpostnatal_3_yr",
-                           "DPHP_Postnatal_4_yr" = "DPHP-visitpostnatal_4_yr",
-                           "DPHP_Postnatal_5_yr" = "DPHP-visitpostnatal_5_yr",
-                           "DPHP_Postnatal_8_yr" = "DPHP-visitpostnatal_8_yr",
-                           "DNBP_Prenatal_16W" = "DNBP",
-                           "DNBP_Prenatal_26W" = "DNBP-visitprenatal_26W",
-                           "DNBP_Delivery" = "DNBP-visitdelivery",
-                           "DNBP_Postnatal_3_yr" = "DNBP-visitpostnatal_3_yr",
-                           "DNBP_Postnatal_4_yr" = "DNBP-visitpostnatal_4_yr",
-                           "DNBP_Postnatal_5_yr" = "DNBP-visitpostnatal_5_yr",
-                           "DNBP_Postnatal_8_yr" = "DNBP-visitpostnatal_8_yr"
-                            ))  |>
+sex_df<- read_csv(paste0(res, "/strata_sex/final_est_ci.csv")) |>  
   mutate(gender = fct_recode(gender, 
                         "Male" = "male", 
                         "Female" = "female")) |>
-  filter(!str_detect(term, "Postnatal_8_yr$")) |>
-  mutate(term = str_replace(term, "(.*)Postnatal_5_yr$", "\\1Child_8_yr"))|>
-  mutate(term = str_replace(term, "(.*)Postnatal_4_yr$", "\\1Child_5_yr"))  |>
+  mutate(term = str_replace(term, "(.*)Postnatal_8_yr$", "\\1Child_8_yr"))|>
+  mutate(term = str_replace(term, "(.*)Postnatal_5_yr$", "\\1Child_5_yr")) |>
+  mutate(term = str_replace(term, "(.*)Postnatal_3_yr$", "\\1Child_3_yr")) |>
   mutate(term = str_replace(term, "Postnatal", "Child"))|>
   mutate(
     chemical = str_extract(term, "^[^_]+"),
-    visit = str_remove(term, "^[^_]+_")
-  ) |>
-  mutate(outcome_set = recode(outcome_set, "Parent" = "Caregiver", "Child" = "Adolescent"))
+    visit = str_remove(term, "^[^_]+_"),
+    outcome_category = case_when(outcome_label %in% 
+                                        c("Communication", "Cooperation", "Assertion", 
+                                          "Responsibility", "Empathy", "Engagement", 
+                                          "Self_control", "Social_skills_scale") ~ "Social Skills",
+                                      TRUE ~ "Problem Behavior")
+  )
 
 sex_df_adole<- sex_df |> filter(outcome_set == "Adolescent")
 sex_df_care_giv<- sex_df |> filter(outcome_set == "Caregiver")
 ```
 
+#for article text
+```{r}
+x<- sex_df_adole |> filter(chemical =="BCEP", outcome_label == "Bullying", 
+                     visit == "Prenatal_16W")
+
+x<- sex_df_care_giv |> filter(chemical =="DPHP", outcome_label == "Hyperactivity_inattention", 
+                     visit == "Prenatal_16W")
+```
+
+
+#reorder y axis levels
 ```{r}
 sex_df_care_giv$visit <- factor(sex_df_care_giv$visit, levels = c(
   "Prenatal_16W",
@@ -231,13 +215,16 @@ sex_df_care_giv$visit <- factor(sex_df_care_giv$visit, levels = c(
   "Child_5_yr",
   "Child_8_yr"
 ))
-```
 
+sex_df_care_giv$gender <- factor(sex_df_care_giv$gender, 
+                                 levels = c( "Female", "Male" ))
+```
 
 ```{r}
 cbbPalette <- c("#D55E00", "#0072B2")
 
-ggplot(sex_df_care_giv, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = conf_high, shape= gender)) + 
+ggplot(sex_df_care_giv, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = conf_high, 
+                            shape= gender)) + 
   geom_pointrange(aes(color = ifelse(conf_low <= 0 & conf_high >= 0, "Contains 0", "Doesn't contain 0")), 
                   position = position_dodge(width = 0.8), size = 0.6)+
   geom_vline(aes(xintercept = 0), linetype="dashed") + 
