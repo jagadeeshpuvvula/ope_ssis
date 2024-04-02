@@ -56,7 +56,7 @@ for (prefix in c("bcep", "bdcipp", "dnbp", "dphp")) {
 list2env(setNames(dataframes, paste0("dat_", sapply(dataframes, function(df) tail(colnames(df), 1)))), .GlobalEnv)
 ```
 
-#remove not reported values due to interference
+#remove not reported values due to interference - skip this step
 ```{r}
 dat_bcep<- drop_NR_interference(dat_bcep, "bcep")
 dat_dnbp<- drop_NR_interference(dat_dnbp, "dnbp") 
@@ -94,12 +94,6 @@ process_dataset <- function(dataset, dataset_name) {
 
 # Apply the function to each dataset
 processed_datasets <- map2_df(datasets, dataset_names, process_dataset)
-
-#correcting visit labels:
-processed_datasets_x <- processed_datasets |>
-  mutate(visit = recode(visit, "postnatal_8_yr" = "postnatal_12_yr"))|>
-  mutate(visit = recode(visit, "postnatal_5_yr" = "postnatal_8_yr")) |>
-  mutate(visit = recode(visit, "postnatal_4_yr" = "postnatal_5_yr"))
 #=============================================================================#
 ```
 
@@ -121,7 +115,7 @@ for (obj in ls()) {
 }
 
 save(imp_dat_bcep, imp_dat_bdcipp, imp_dat_dnbp, imp_dat_dphp, 
-     file = paste0("~/Documents/ope_ssis/data/opfr_imputed_objects.rda"))
+     file = paste0("~/Documents/ope_ssis/data/opfr_imputed_objects_m50.rda"))
 ```
 
 #load imputed datasets
@@ -132,7 +126,7 @@ load(paste0(dat_loc, "opfr_imputed_objects.rda"))
 #for testing
 ```{r}
 runGeeglmParallel(datasets = c("imp_dat_dphp", "imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp"), 
-                  covariates = c("gender", "child_race", "mat_age", "mari_st_p4", "mom_edu_p4_cat",
+                  covariates = c("gender","child_race", "mat_age", "mari_st_p4", "mom_edu_p4_cat",
                                  "mid_income_p4", "cotinine" , "bdi_p4", "lead", "rfr_gs_t"),
                   outcomes = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
                               "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
@@ -140,7 +134,7 @@ runGeeglmParallel(datasets = c("imp_dat_dphp", "imp_dat_bcep", "imp_dat_bdcipp",
                               "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
                               "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
                               "int_raw_p", "as_raw_p"),
-                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_feb")
+                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_march2/")
 ```
 
 ```{r}
@@ -151,7 +145,7 @@ x<-as_tibble(tidy(pool(fit), conf.int = TRUE))
 
 #get estimates as csv
 ```{r}
-extractGEEParallel(input_folder="~/Documents/ope_ssis/result/gee_mi_res_feb", 
-                   output_folder= "~/Documents/ope_ssis/result/gee_mi_res_feb")
+extractGEEParallel(input_folder="~/Documents/ope_ssis/result/gee_mi_res_march2", 
+                   output_folder= "~/Documents/ope_ssis/result/gee_mi_res_march2")
 ```
 
