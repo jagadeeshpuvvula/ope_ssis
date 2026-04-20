@@ -1,4 +1,4 @@
-# Code to reproduce: Puvvula J, Braun, JM, Yolton K, Cecil KM, Calafat AM, Ospina M, Fitts W, Yang W, Vuong AM, Lanphear B, Chen A. Association between Gestational and Childhood Exposures to Organophosphate Esters with Social Skill, Problem Behavior among Adolescents. Environ Res. 2026; 124553 
+# Code to reproduce: Puvvula J, Braun, JM, Yolton K, Cecil KM, Calafat AM, Ospina M, Fitts W, Yang W, Vuong AM, Lanphear B, Chen A. Association between Gestational and Childhood Exposures to Organophosphate Esters with Social Skill, Problem Behavior among Adolescents. Environ Res. 2026; 124553: https://doi.org/10.1016/j.envres.2026.124553 
 
 # R environment
 
