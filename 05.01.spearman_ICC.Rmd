@@ -7,7 +7,7 @@ output: pdf_document
 
 ```{r}
 library(pacman)
-pacman::p_load(tidyverse, janitor, psych, reshape2, qgcomp, BlandAltmanLeh)
+pacman::p_load(tidyverse, janitor, psych, mice, reshape2, qgcomp, BlandAltmanLeh)
 
 dat_loc <- "~/Documents/ope_ssis/data/"
 res<- "~/Documents/ope_ssis/result/"
@@ -26,7 +26,7 @@ result_list <- list()
 # Loop through each dataset
 for (name in names(datasets)) {
   # Apply the process to each dataset
-  result <- complete(datasets[[name]], "long") %>%
+  result <- mice::complete(datasets[[name]], "long") %>%
     select(3, 42, 43) %>%
     group_by(participant_id, visit) %>%
     summarize(across(where(is.numeric), mean)) %>%
@@ -48,8 +48,8 @@ rm(list = setdiff(ls(), "combined_result"))
 combined_result_x<- combined_result |>
   mutate(value = ifelse(value > 5000, NA, value)) |>
   mutate(value= log10(value)) |>
-  mutate(visit = recode(visit, "baseline" = "Prenatal_16w",
-                        "prenatal_26W" = "Prenatal_26w",
+  mutate(visit = recode(visit, "baseline" = "Gestational_16w",
+                        "prenatal_26W" = "Gestational_26w",
                         "delivery" = "Delivery",
                         "postnatal_1_yr"= "Child_1_yr",
                         "postnatal_2_yr" = "Child_2_yr",
@@ -68,13 +68,13 @@ cor_matrix_rnd <- round(cor_matrix, digits = 2)
 
 #mapping
 visit_mapping <- c(
-  "BCEP_Prenatal_16w", "BCEP_Prenatal_26w", "BCEP_Delivery", "BCEP_Child_1_yr", "BCEP_Child_2_yr", 
+  "BCEP_Gestational_16w", "BCEP_Gestational_26w", "BCEP_Delivery", "BCEP_Child_1_yr", "BCEP_Child_2_yr", 
   "BCEP_Child_3_yr", "BCEP_Child_5_yr", "BCEP_Child_8_yr",
-  "BDCIPP_Prenatal_16w", "BDCIPP_Prenatal_26w", "BDCIPP_Delivery", "BDCIPP_Child_1_yr", "BDCIPP_Child_2_yr", 
+  "BDCIPP_Gestational_16w", "BDCIPP_Gestational_26w", "BDCIPP_Delivery", "BDCIPP_Child_1_yr", "BDCIPP_Child_2_yr", 
   "BDCIPP_Child_3_yr", "BDCIPP_Child_5_yr", "BDCIPP_Child_8_yr",
-  "DNBP_Prenatal_16w", "DNBP_Prenatal_26w", "DNBP_Delivery", "DNBP_Child_1_yr", "DNBP_Child_2_yr", 
+  "DNBP_Gestational_16w", "DNBP_Gestational_26w", "DNBP_Delivery", "DNBP_Child_1_yr", "DNBP_Child_2_yr", 
   "DNBP_Child_3_yr",  "DNBP_Child_5_yr", "DNBP_Child_8_yr",
-  "DPHP_Prenatal_16w", "DPHP_Prenatal_26w", "DPHP_Delivery", "DPHP_Child_1_yr", "DPHP_Child_2_yr", 
+  "DPHP_Gestational_16w", "DPHP_Gestational_26w", "DPHP_Delivery", "DPHP_Child_1_yr", "DPHP_Child_2_yr", 
   "DPHP_Child_3_yr", "DPHP_Child_5_yr", "DPHP_Child_8_yr"
 )
 
@@ -82,6 +82,13 @@ visit_mapping <- c(
 melted_cor_matrix <- melt(cor_matrix_rnd) |>
   mutate_at(vars(Var1, Var2), ~factor(., levels = rev(visit_mapping)))
 ```
+
+#for text
+```{r}
+filtered_data <- melted_cor_matrix |> 
+  filter(endsWith(as.character(Var1), "_8_yr") & endsWith(as.character(Var2), "_8_yr"))
+```
+
 
 #visualizing spearman correlations
 ```{r}
@@ -106,7 +113,7 @@ ggplot(melted_cor_matrix, aes(x = Var2, y = Var1, fill = value, label=value)) + 
   geom_hline(yintercept = c(0, 8.5, 14.5, 22.5, 31.5), color = "black", size = 0.8) +
   geom_vline(xintercept = c(0, 8.5, 14.5, 22.5, 31.5), color = "black", size = 0.8)
 
-ggsave(paste0(res, "opfr_correlation_heatmap.tiff"),
+ggsave(paste0(res, "opfr_correlation_heatmap_nov2024.tiff"),
        width=10, height= 10, dpi=300)
 ```
 
@@ -116,8 +123,10 @@ ggsave(paste0(res, "opfr_correlation_heatmap.tiff"),
 p_load(lme4, performance, broom, gt, apaTables, haven, psych)
 
 x<- combined_result |>
-  mutate(value = ifelse(value > 5000, NA, value)) |>
-  filter(chemical == "dphp")
+  #mutate(value = ifelse(value > 5000, NA, value)) |>
+  filter(chemical == "bcep") |>
+  filter(!visit %in% c("baseline", "prenatal_26W", "delivery")) |>
+  mutate(value= log10(value))
 
 # model 1
 model1 <- lmer(value ~ visit + (1 | participant_id), data=x)
@@ -125,11 +134,8 @@ model1 <- lmer(value ~ visit + (1 | participant_id), data=x)
 performance::icc(model1)
 ```
 
-```
-
 #summary table
 ```{r}
-#summary tbl
 summary_stats <- combined_result_x |>
   pivot_longer(cols = -participant_id,
                names_to = "variable",

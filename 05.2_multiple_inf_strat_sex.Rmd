@@ -109,6 +109,22 @@ df_res_male<- df_res |> filter(gender=="male")
 df_res_female<- df_res |> filter(gender=="female")
 ```
 
+#for table
+```{r}
+filtered_data <- df_res |> 
+  filter(term %in% c("BCEP", "BDCIPP", "DNBP", "DPHP")) |>
+  mutate(outcome_set = recode(outcome_set, "Parent" = "Caregiver", "Child" = "Adolescent")) |>
+  mutate(estimate_conf = sprintf("%.3f (%.3f, %.3f)", estimate, conf_low, conf_high)) |>
+  select(c(5,7:9,11))
+
+
+x<- filtered_data |>
+  filter(outcome_label == "Externalizing",
+         outcome_set == "Caregiver")
+```
+
+
+
 ```{r}
 sequence <- 1:810
 repetition_indices <- c(rep(sequence[1:54], each = 8), rep(sequence[55:81], each = 6), rep(sequence[82:108], each = 8))

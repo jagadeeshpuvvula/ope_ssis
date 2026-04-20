@@ -5,7 +5,7 @@ date: "2023-08-02"
 output: pdf_document
 ---
 
-#function to create imputed datasets - leftcenslognorm imputation - 10 sets
+#function to create imputed datasets - leftcenslognorm imputation - 20 sets
 ```{r}
 generate_imputed_datasets <- function(...) {
   datasets <- list(...)
@@ -18,7 +18,7 @@ generate_imputed_datasets <- function(...) {
     imputed_dataset <- dataset |>
       mice(m = 50, 
            method = c(rep("", 40), "leftcenslognorm"), 
-           maxit = 20, 
+           maxit = 50, #setting to default
            seed = 2023,
            lod=c(rep(NA, 40), 0.1)) |>
       clean_names()
@@ -33,88 +33,6 @@ generate_imputed_datasets <- function(...) {
 
 # Built GEE and pooling using examples from UCLA: 
 #https://stats.oarc.ucla.edu/r/faq/how-do-i-perform-multiple-imputation-using-predictive-mean-matching-in-r/
-
-#function to run GEE - using dataframes from MICE miltiple imputation
-```{r}
-runGeeglm <- function(datasets, outcomes, outputFolder) {
-  for (dataset in datasets) {
-    # Extract the last part of the input data name
-    exposure <- tail(strsplit(dataset, "_")[[1]], 1)
-  
-    # Load the dataset
-    data <- get(dataset)
-  
-    # Iterate over each outcome
-    for (outcome in outcomes) {
-      # Perform geeglm analysis
-      fit <- with(data, geeglm(get(outcome) ~ log(get(exposure))*visit + 
-                                gender + child_race + mat_age + mari_st_p4 + mom_edu_p4_cat +
-                                mid_income_p4 + cotinine, 
-                              id = participant_id, 
-                              family = "gaussian", corstr = "independence"))
-    
-      # Save the output to the provided folder in RDA format
-      outputName <- paste(outputFolder, "/", dataset, "_", outcome, "_", exposure, ".rda", sep = "")
-      save(fit, file = outputName)
-    }
-  }
-}
-```
-
-#for testing only
-```{r}
-runGeeglm(datasets = c("imp_dat_dphp","imp_dat_bcep", "imp_dat_bdcipp",  "imp_dat_dnbp"),
-                  outcomes = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
-                              "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
-                              "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
-                              "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
-                              "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
-                              "int_raw_p", "as_raw_p"),
-                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_feb/")
-```
-
-#function to extract GEE estimates from rda objects
-```{r}
-extractGEE <- function(input_folder, output_folder) {
-  # Get a list of RDA files in the input folder
-  rda_files <- list.files(input_folder, pattern = "\\.rda$", full.names = TRUE)
-  
-  # Initialize an empty dataframe to store the results
-  data <- data.frame()
-  
-  # Loop through each RDA file
-  for (file in rda_files) {
-    # Load the RDA file
-    load(file)
-    
-    # Perform operations and extract required rows
-    extracted_data <- as_tibble(tidy(pool(fit), conf.int = TRUE)) %>%
-      slice(2, 12, 13)
-    
-    # Get the filename without path or extension
-    filename <- str_remove(basename(file), "\\.[^.]+$")
-    
-    # Trim the filename to remove the "imp_dat_" prefix
-    trimmed_filename <- str_remove(filename, "^imp_dat_")
-    
-    # Split the filename into exposure and outcome variables
-    split_strings <- str_split(trimmed_filename, "_")
-    exposure <- split_strings[[1]][1]
-    outcome <- paste(split_strings[[1]][2:(length(split_strings[[1]]) - 1)], collapse = "_")
-    
-    # Add the exposure and outcome variables
-    extracted_data$exposure <- exposure
-    extracted_data$outcome <- outcome
-    
-    # Bind the extracted data to the existing dataframe
-    data <- bind_rows(data, extracted_data)
-  }
-  
-  # Export the dataframe as a CSV to the output folder
-  output_file <- file.path(output_folder, "output.csv")
-  write_csv(data, output_file)
-}
-```
 
 #geeglm parallel
 ```{r}
@@ -132,6 +50,9 @@ runGeeglmParallel<- function(datasets, outcomes, covariates, outputFolder) {
   
     # Load the dataset
     data <- get(dataset)
+    
+    # Set exposure values censored as unmeasured or NR-interference to missing
+    data$exposure[data$exposure > 5000] <- NA
   
     # Iterate over each outcome
     for (outcome in outcomes) {
@@ -211,11 +132,12 @@ extractGEEParallel<- function(input_folder, output_folder) {
 ```
 
 
-drop NR dur to interference
+drop NR due to interference or unmeasured
+#| data[[last_variable_name]] == 7777.000
 ```{r}
 drop_NR_interference<- function(data, last_variable_name) {
-  # Identify rows where the last variable is equal to 9999.000
-  rows_to_drop <- which(data[[last_variable_name]] == 9999.000)
+  # Identify rows where the last variable is equal to 9999.000 (interference)
+  rows_to_drop <- which(data[[last_variable_name]] == 9999.000 )
   
   # Get the participant_id corresponding to these rows
   participant_ids_to_drop <- data$participant_id[rows_to_drop]
@@ -225,6 +147,446 @@ drop_NR_interference<- function(data, last_variable_name) {
   
   # Return the modified data frame
   return(data)
+}
+
+```
+
+#summary function
+```{r}
+summarize_by_category <- function(data, continuous_vars, categorical_vars) {
+  # Initialize an empty list to store results
+  result_list <- list()
+  
+  # Loop over each categorical variable
+  for (cat_var in categorical_vars) {
+    # Loop over each continuous variable
+    for (cont_var in continuous_vars) {
+      # Summarize mean and standard deviation by the categorical variable
+      summary_df <- data |> 
+        group_by(.data[[cat_var]]) |> 
+        summarize(
+          summary = sprintf("%.2f (%.2f)", 
+                            mean(.data[[cont_var]], na.rm = TRUE), 
+                            sd(.data[[cont_var]], na.rm = TRUE)),
+          .groups = "drop"
+        ) |> 
+        mutate(
+          variable = cont_var,
+          category = paste(cat_var, as.character(.data[[cat_var]]), sep = "-")
+        )
+      
+      # Append the result to the list
+      result_list[[paste0(cat_var, "_", cont_var)]] <- summary_df
+    }
+  }
+  
+  # Combine all results into a single dataframe
+  result_df <- bind_rows(result_list) |> 
+    select(variable, category, summary)
+  
+  return(result_df)
+}
+```
+
+#single imputation
+```{r}
+fLOD <- function(test.result, meanlog2, sdlog2){ ##Create a new function, fLOD, which needs 3 inputs: the LOD value (represented by labres$test.result in FLAGGED rows); the mean (meanlog2); the sd (sdlog2)
+  impute <- rtruncnorm(1, b=log2(test.result), mean=meanlog2, sd=sdlog2) #the function will then run the rtruncnorm command given the inputs (eg. b= upper limit = log2(LOD), mean, and sd) 
+  return(impute) 
+}
+
+impute <- function(data, dist_data, name, short_name) {
+  # Convert name to character if not already
+  name <- as.character(name)
+  
+  # Extract mean and standard deviation for the given test name
+  meanlog2 <- dist_data$meanlog2[dist_data$test.name == name]
+  sdlog2 <- dist_data$sdlog2[dist_data$test.name == name]
+  
+  # Impute values and create the updated dataset
+  data_imputed <- data |> 
+    mutate(
+      log2_imputed = ifelse(
+        flg_lod == 1,
+        apply(data, 1, function(x) fLOD(result, meanlog2, sdlog2)),
+        log2_result
+      ),
+      untrans_res = 2^(log2_imputed)  # Un-transform results
+    ) |> 
+    select(participant_id, flg_lod, untrans_res)
+  
+  # Rename columns for clarity
+  colnames(data_imputed)[2] <- paste0(short_name, ".flag")
+  colnames(data_imputed)[3] <- paste0(short_name, ".res")
+  
+  return(data_imputed)
+}
+
+
+process_combination <- function(analyte_code, visit) {
+  filtered_data <- ope_exp_raw |>
+    filter(analyte_code == !!analyte_code, visit == !!visit)
+  
+  # Generate the name dynamically
+  name <- paste0(analyte_code, ".t", visit)
+  
+  # Check if `meanlog2` and `sdlog2` are available in `dist_data`
+  meanlog2 <- LODmeansd.all$meanlog2[LODmeansd.all$test.name == name]
+  sdlog2 <- LODmeansd.all$sdlog2[LODmeansd.all$test.name == name]
+  
+  if (length(meanlog2) == 0 || length(sdlog2) == 0) {
+    warning(paste("Missing meanlog2 or sdlog2 for:", name))
+    return(NULL) # Skip this combination
+  }
+  
+  # Apply the imputation
+  imputed_data <- impute(
+    data = filtered_data,
+    dist_data = LODmeansd.all,
+    name = name,
+    short_name = name
+  )
+  
+  # Extract `analyte_code` and `visit` from column names
+  analyte_result_var <- paste0(analyte_code, ".t", visit, ".res")
+  flg_lod_var <- paste0(analyte_code, ".t", visit, ".flag")
+  
+  # Rename columns for consistency
+  imputed_data <- imputed_data |>
+    rename(
+      flg_lod = all_of(flg_lod_var),
+      analyte_result = all_of(analyte_result_var)
+    ) |>
+    mutate(
+      analyte_code = analyte_code,
+      visit = visit
+    ) |>
+    select(participant_id, analyte_code, visit, analyte_result, flg_lod)
+  
+  return(imputed_data)
+}
+
+```
+
+#aft imputation : https://github.com/ml5977/LOD_accommodation/blob/main/Mixture_LOD_example_code.R 
+#need Log2 transformed exposure data as input
+```{r}
+library(survival)
+library(tmvtnorm)
+
+perform_aft_imputation <- function(data, predictor_vars, z_vars, ind_vars, covariate_vars) {
+  # Copy input data
+  aft.data <- data
+  
+  # Transform covariates to exp scale
+  aft.data[,covariate_vars] <- exp(aft.data[,covariate_vars])
+  
+  # Get dimensions
+  lod.n <- length(z_vars)
+  n <- nrow(aft.data)
+  
+  # Initialize matrices
+  aft.coef.mat <- matrix(NA, ncol=length(predictor_vars) + 1, nrow=lod.n)
+  aft.resi.mat <- matrix(NA, ncol=lod.n, nrow=n)
+  aft.mean.mat <- matrix(NA, ncol=lod.n, nrow=n)
+  
+  # AFT model fitting
+  for(i in 1:length(z_vars)) {
+    TT <- -log(aft.data[,z_vars[i]])
+    delta <- aft.data[,ind_vars[i]]
+    formula <- as.formula(paste("Surv(exp(TT), delta) ~", paste(predictor_vars, collapse="+")))
+    aft.reg <- survreg(formula, dist="lognormal", data=aft.data)
+    aft.coef.mat[i,] <- aft.reg$coefficients
+    aft.resi.mat[,i] <- TT-as.matrix(cbind(1, aft.data[,predictor_vars]))%*%matrix(aft.reg$coefficients)
+    aft.mean.mat[,i] <- as.matrix(cbind(1, aft.data[,predictor_vars]))%*%matrix(aft.reg$coefficients)
+  }
+  
+  # Estimate covariance matrix
+  aft.resi.mat2 <- aft.resi.mat
+  aft.resi.mat2 <- ifelse(aft.data[,ind_vars]==1, aft.resi.mat2, NA)
+  sigma <- cov(aft.resi.mat2, use="pairwise.complete.obs")
+  
+  # Imputation
+  imputed.res.mat <- aft.resi.mat2
+  delta.mat <- aft.data[,ind_vars]
+  
+  for(k in 1:n){
+    ind.delta <- delta.mat[k,]
+    ind.res <- aft.resi.mat[k,]
+    obs.d <- which(ind.delta==1)
+    mis.d <- which(ind.delta==0)
+    
+    if(sum(ind.delta)==0){
+      mu.cond <- rep(0, lod.n)
+      cov.cond <- sigma
+      tmu.cond <- mtmvnorm(mean=c(mu.cond), sigma=cov.cond, lower=ind.res[mis.d])$tmean
+      imputed.res.mat[k,mis.d] <- tmu.cond
+    }else if(sum(ind.delta)!=lod.n){
+      mu.cond <- sigma[mis.d, obs.d]%*%solve(sigma[obs.d, obs.d])%*%(ind.res[obs.d])
+      cov.cond <- sigma[mis.d, mis.d] - sigma[mis.d, obs.d]%*%solve(sigma[obs.d, obs.d])%*%sigma[obs.d, mis.d]
+      tmu.cond <- mtmvnorm(mean=c(mu.cond), sigma=cov.cond, lower=ind.res[mis.d])$tmean
+      tmu.cond <- ifelse(is.na(tmu.cond)==TRUE, ind.res[mis.d], tmu.cond)
+      imputed.res.mat[k,mis.d] <- tmu.cond
+    }
+  }
+  
+  imputed.Z <- exp(-(aft.mean.mat + imputed.res.mat))
+  aft.data[,z_vars] <- imputed.Z
+  aft.data[,covariate_vars] <- log(aft.data[,covariate_vars])
+  
+  return(aft.data)
+}
+```
+
+#qgc
+```{r}
+qgcomp_func <- function(outcomes, data, output_folder, chemicals, covariates,
+                        include_sex = TRUE, q, b, seed) {
+    
+    sex_levels <- if (include_sex) c("all", "Female", "Male") else "all"
+    
+    for (sex_level in sex_levels) {
+        if (sex_level == "all") {
+            sex_data <- data
+            sex_formula <- "sex"
+        } else {
+            sex_data <- subset(data, sex == sex_level)
+            sex_formula <- ""
+        }
+        
+        filename_prefix <- sex_level
+        
+        for (outcome in outcomes) {
+            formula <- as.formula(paste(outcome, "~",
+                                        paste(chemicals, collapse = " + "), "+",
+                                        sex_formula, "+",
+                                        paste(covariates, collapse = " + ")))
+            
+            nb <- qgcomp.noboot(formula, expnms = mixture, data = sex_data, family = gaussian(), q = q)
+            boot <- qgcomp.boot(formula, expnms = mixture, data = sex_data, family = gaussian(), q = q, B = b, seed = seed)
+            save(nb, file = paste0(output_folder, "/", "nb_", filename_prefix, "_", outcome, ".rda"))
+            save(boot, file = paste0(output_folder, "/", "boot_", filename_prefix, "_", outcome, ".rda"))
+        }
+    }
+}
+```
+
+```{r}
+get_gcomp_estimates<- function(results_folder) {
+  # get the file names in the folder
+  file_names <- list.files(results_folder)
+
+  # create empty data frame to store the results
+  results <- data.frame(file = character(),
+                        estimate = numeric(),
+                        lower_ci = numeric(),
+                        upper_ci = numeric(),
+                        stringsAsFactors = FALSE)
+
+  #loops through all .rda files and extract estimates, CI & p-values
+  for (file_name in file_names) {
+    # load the object from the file
+    load(file.path(results_folder, file_name))
+    # extract the object name using grep or grepl
+    object_name <- ls()[grep("^boot|^nb", ls())]
+    # extract the required information using the summary function and the object name
+    estimate <- get(object_name)$coef["psi1"]
+    CI <- get(object_name)$ci
+    lower_ci <- CI[1]
+    upper_ci <- CI[2]
+    p_value <- get(object_name)$pval[2]
+    # split file name by "_" and remove ".rda"
+    file_parts <- strsplit(gsub("\\.rda", "", file_name), "_")[[1]]
+    # assign parts to variables
+    part1 <- file_parts[1]
+    part2 <- file_parts[2]
+    part3 <- file_name
+    # print out the values
+    cat("File:", file_name, "\n")
+    cat("  Estimate:", estimate, "\n")
+    cat("  Lower CI:", lower_ci, "\n")
+    cat("  Upper CI:", upper_ci, "\n")
+    cat("  p-value:", p_value, "\n")
+    cat("  Part 1:", part1, "\n")
+    cat("  Part 2:", part2, "\n")
+    cat("  Part 3:", part3, "\n")
+    # add the results to the data frame
+    results <- rbind(results, data.frame(boot_strp = part1,
+                                         gender = part2,
+                                         filename = part3,
+                                         estimate = estimate,
+                                         lower_ci = lower_ci,
+                                         upper_ci = upper_ci,
+                                         p_value = p_value,
+                                         stringsAsFactors = FALSE))
+    # remove the object from the R environment to avoid conflicts with other objects (all objects saved as nb or boot)
+    rm(list = object_name)
+  }
+
+  return(results)
+}
+```
+
+#qgcomp weights
+```{r}
+extract_weights <- function(folder_location) {
+  # get list of files that start with "nb"
+  nb_files <- list.files(path = folder_location, pattern = "^nb.*\\.rda$", full.names = TRUE)
+
+  # create an empty list to store results
+  results_list <- list()
+
+  # loop through each nb file
+  for (file in nb_files) {
+    # load data from file
+    load(file)
+
+    # extract neg and pos weights
+    neg <- as.data.frame(nb$neg.weights) |>
+      rename(weight = `nb$neg.weights`) |>
+      rownames_to_column("chemical") |>
+      mutate(direction = "neg")
+
+    pos <- as.data.frame(nb$pos.weights) |>
+      rename(weight = `nb$pos.weights`) |>
+      rownames_to_column("chemical") |>
+      mutate(direction = "pos")
+
+    weights_df <- bind_rows(neg, pos)
+
+    # extract file name without path and .rda extension using regular expression
+    filename <- sub(".*/(.*)\\.rda", "\\1", file)
+
+    # Add "file_name" as a variable to weights_df
+    weights_df$filename <- filename
+
+    # Extract psi values and add them as rows
+    if (is.list(nb$psi)) {
+      psi1 <- nb$psi$psi1
+    } else {
+      psi1 <- NA
+    }
+
+    psi_df <- data.frame(chemical = "neg.psi", weight = nb$neg.psi, direction = "neg_psi", filename = filename) |>
+      rbind(data.frame(chemical = "pos.psi", weight = nb$pos.psi, direction = "pos_psi", filename = filename)) |>
+      rbind(data.frame(chemical = "psi1", weight = nb$psi, direction = "psi1", filename = filename))
+
+    # Append psi_df to weights_df
+    combined_df <- bind_rows(weights_df, psi_df)
+
+    # Append combined_df to results_list
+    results_list[[filename]] <- combined_df
+  }
+
+  # Combine all results into a single dataframe
+  results_df <- do.call(rbind, results_list)
+
+  return(results_df)
+}
+```
+
+```{r}
+lm_func <- function(dependent_vars, independent_vars, data, covariates, include_sex = TRUE, include_cohort = FALSE, conf_level = 0.95) {
+  # Create empty lists to store results
+  dependent_list <- list()
+  independent_list <- list()
+  sex_level_list <- list()
+  coef_list <- list()
+  p_value_list <- list()
+  ci_lower_list <- list()
+  ci_upper_list <- list()
+  
+  if ("sex" %in% colnames(data)) {
+    sex_present <- TRUE
+  } else {
+    sex_present <- FALSE
+    include_sex <- FALSE
+  }
+  
+  sex_levels <- if (include_sex) c("all", "Female", "Male") else "all"
+  
+  for (sex_level in sex_levels) {
+    if (sex_level == "all" || !sex_present) {
+      sex_data <- data
+      # Only include sex as covariate when analyzing both sexes together
+      if (sex_level == "all" && sex_present) {
+        all_covariates <- c(covariates, "sex")
+      } else {
+        all_covariates <- covariates
+      }
+    } else {
+      sex_data <- subset(data, sex == sex_level)
+      all_covariates <- covariates  # Don't include sex as a covariate for sex-specific analyses
+    }
+    
+    # Check for factor variables with only one level in this subset
+    valid_covariates <- c()
+    for (cov in all_covariates) {
+      if (is.factor(sex_data[[cov]])) {
+        # Drop levels that don't appear in this subset
+        sex_data[[cov]] <- droplevels(sex_data[[cov]])
+        if (length(levels(sex_data[[cov]])) >= 2) {
+          valid_covariates <- c(valid_covariates, cov)
+        } else {
+          warning(paste("Covariate", cov, "dropped for", sex_level, "as it has only one level"))
+        }
+      } else {
+        valid_covariates <- c(valid_covariates, cov)
+      }
+    }
+    
+    # Loop through all combinations of dependent and independent variables
+    for (i in 1:length(dependent_vars)) {
+      for (j in 1:length(independent_vars)) {
+        # Create the covariates formula dynamically based on the valid covariates
+        if (length(valid_covariates) > 0) {
+          covariate_formula <- paste(valid_covariates, collapse = " + ")
+          formula_str <- paste(dependent_vars[i], "~", independent_vars[j], "+", covariate_formula)
+        } else {
+          formula_str <- paste(dependent_vars[i], "~", independent_vars[j])
+        }
+        
+        # Run linear regression with dynamic covariates
+        formula <- as.formula(formula_str)
+        
+        tryCatch({
+          model <- lm(formula, sex_data)
+          
+          # Calculate confidence interval
+          ci <- confint(model, parm = independent_vars[j], level = conf_level)
+          
+          # Store results in lists
+          dependent_list[[length(dependent_list) + 1]] <- dependent_vars[i]
+          independent_list[[length(independent_list) + 1]] <- independent_vars[j]
+          sex_level_list[[length(sex_level_list) + 1]] <- sex_level
+          coef_list[[length(coef_list) + 1]] <- coef(model)[independent_vars[j]]
+          p_value_list[[length(p_value_list) + 1]] <- summary(model)$coefficients[independent_vars[j], 4]
+          ci_lower_list[[length(ci_lower_list) + 1]] <- ci[1]
+          ci_upper_list[[length(ci_upper_list) + 1]] <- ci[2]
+          
+        }, error = function(e) {
+          warning(paste("Error in model for", dependent_vars[i], "~", independent_vars[j], "with sex =", sex_level, ":", e$message))
+        })
+      }
+    }
+  }
+  
+  # Create a dataframe with results
+  if (length(dependent_list) > 0) {
+    results <- data.frame(
+      dependent_variable = unlist(dependent_list),
+      independent_variable = unlist(independent_list),
+      sex_level = unlist(sex_level_list),
+      coefficient = unlist(coef_list),
+      p_value = unlist(p_value_list),
+      ci_lower = unlist(ci_lower_list),
+      ci_upper = unlist(ci_upper_list)
+    )
+    return(results)
+  } else {
+    warning("No models were successfully fit")
+    return(NULL)
+  }
 }
 
 ```

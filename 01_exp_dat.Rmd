@@ -13,11 +13,27 @@ dat_loc <- "~/Documents/ope_ssis/data/"
 res<- "~/Documents/ope_ssis/result/"
 ```
 
-#ope data - pre and post natal exposure data received from aimin on Dec 13, 2023
+#outcome and covariates data [n=236]
 ```{r}
-ope_exp_raw<- read_sas(paste0(dat_loc, "raw/dec_23_new_ver/ur_fr_sg_20210921.sas7bdat")) |>
+outcom_cov<- read_csv("~/Documents/ope_ssis/res_sing_imput/out_cov.csv")
+```
+
+#ope data - pre and post natal exposure data received from aimin on Dec 13, 2023
+#imputed 32 observations with no SG values with visit specific median SG
+```{r}
+dat_1<- read_sas(paste0(dat_loc, "raw/dec_23_new_ver/ur_fr_sg_20210921.sas7bdat"))
+dat_2<- read_sas(paste0(dat_loc, "raw/dec_23_new_ver/ur_fr_12y.sas7bdat"))
+
+ope_dat<- bind_rows(dat_1, dat_2)
+
+ope_exp_raw<- ope_dat |>
   clean_names() |>
   filter(!analyte_code %in% c("DBzP", "DCP", "TBBA", "BCPP", "iPPPP", "tBPPP"))|>
+  group_by(visit) |>
+  mutate(specific_gravity = if_else(is.na(specific_gravity) | specific_gravity == 1,  
+                                    median(specific_gravity, na.rm = TRUE),  
+                                    specific_gravity)) |>
+  ungroup() |>
   mutate(visit = case_when(
     visit == "16W" ~ "prenatal_16W",
     visit == "26W" ~ "prenatal_26W",
@@ -30,16 +46,70 @@ ope_exp_raw<- read_sas(paste0(dat_loc, "raw/dec_23_new_ver/ur_fr_sg_20210921.sas
     visit == "P4" ~ "postnatal_12_yr",
     TRUE ~ as.character(visit)
   )) |>
-  mutate(analyte_code = tolower(analyte_code),
-         specific_gravity = ifelse(specific_gravity == 1, specific_gravity + 0.0001, specific_gravity))|>
   mutate(analyte_code = fct_recode(as.factor(analyte_code), 
-                             bcep = "bcetp", bdcipp = "bdcpp", 
-                             dnbp = "dbup", dphp = "dphp")) |>
-  select(-c(unit, comment, creat, barcode, barcode_creat, barcode_sg, 
-            flg_match_creat, code_nr, flg_match_sg, analyte_lod)) |>
+                             bcep = "BCEtP", bdcipp = "BDCPP", 
+                             dnbp = "DBuP", dphp = "DPhP")) |>
+  dplyr::select(-c(unit, comment, barcode, barcode_creat, barcode_sg, 
+            flg_match_creat, code_nr, flg_match_sg, analyte_lod, collection_month, creat)) |>
   mutate(flg_lod = if_else(is.na(flg_lod) | flg_lod != 1, 0, flg_lod),
-         flg_nr = if_else(is.na(flg_nr) | flg_nr != 1, 0, flg_nr))
+         flg_nr = if_else(is.na(flg_nr) | flg_nr != 1, 0, flg_nr)) |>
+  mutate(result = if_else(flg_lod == 1, 0.1/sqrt(2), result)) |>
+  dplyr::select(-c(flg_nr, flg_lod)) |>
+  #handling duplicate values for observations
+  filter(participant_id %in% outcom_cov$participant_id) |>
+  group_by(participant_id, visit, analyte_code) |>
+  mutate(avg_result = mean(result)) |>
+  distinct(participant_id, visit, analyte_code, .keep_all = TRUE) |>
+  ungroup() |>
+  dplyr::select(-result) |>
+  rename(result = avg_result) 
+
+#correlation between creatinine and urine speicific gravity : 0.66
+#cor(ope_exp_raw$creat, ope_exp_raw$specific_gravity, use = "complete.obs")
 ```
+
+#exposure data prep for aft imputation
+```{r}
+aft_imput_exp_prep<- ope_exp_raw  |>
+  pivot_wider(names_from = analyte_code, values_from = result) |>
+  mutate(across(3:7, ~ as.numeric(sprintf("%.3f", .)))) |>
+  mutate(across(c(bcep, bdcipp, dnbp, dphp), ~ if_else(. < 0.1, 1, 0), .names = "ind_{.col}")) |>
+  mutate(across(c(bcep, bdcipp, dnbp, dphp), ~ if_else(is.na(.), 1, 0), .names = "ind_na_{.col}")) |>
+  mutate(across(8:11, ~ replace_na(., 0))) |>
+  mutate(across(4:7, ~ replace_na(., 0.5)))  |>
+  left_join(outcom_cov, by = "participant_id") |>
+  mutate(across(where(is.character), as.factor))
+```
+
+#aft imputation for <LOD Values
+```{r}
+df_test<- aft_imput_exp_prep |>
+  dplyr::select(c(4:11,28:30)) |>
+  rename(
+    z1 = bcep,
+    z2 = bdcipp,
+    z3 = dnbp,
+    z4 = dphp,
+    ind1 = ind_bcep,
+    ind2 = ind_bdcipp,
+    ind3 = ind_dnbp,
+    ind4 = ind_dphp,
+    x1 = rfr_gs_t,
+    x2 = cotinine,
+    x3 = lead
+  ) |>
+  drop_na() |>
+  as.data.frame()
+
+imputed_data <- perform_aft_imputation(
+    data = df_test,                          # Your input dataset
+    predictor_vars = c( "rfr_gs_t", "cotinine", "lead"),           # Predictor variables for the model
+    z_vars = c("bcep", "bdcipp","dnbp", "dphp"),     # Z variables to be imputed
+    ind_vars = c("ind_bcep", "ind_bdcipp","ind_dnbp", "ind_dphp"), # Indicator of <LOD values
+    covariate_vars = c("bcep", "bdcipp","dnbp", "dphp")  # Covariates to be transformed
+)
+```
+
 
 # get median specific gravity per visit
 ```{r}
@@ -54,25 +124,6 @@ participant_counts <- ope_exp_raw |>
   group_by(visit, analyte_code) |>
   summarize(num_participants = n_distinct(participant_id)) |>
   pivot_wider(names_from = visit, values_from = num_participants)
-```
-
-#find if there are duplicates
-```{r}
-duplicate_counts <- ope_exp_raw %>%
-  group_by(participant_id, visit, analyte_code) %>%
-  summarise(duplicate_count = n() ) %>%
-  filter(duplicate_count > 1)
-```
-
-# handling duplicates
-```{r}
-ope_exp_dist<- ope_exp_raw |>
-  group_by(participant_id, visit, analyte_code) |>
-  mutate(avg_result = mean(result)) |>
-  distinct(participant_id, visit, analyte_code, .keep_all = TRUE) |>
-  ungroup() |>
-  select(-result) |>
-  rename(result = avg_result)
 ```
 
 #urine specific gravity standardization of OPE concentrations

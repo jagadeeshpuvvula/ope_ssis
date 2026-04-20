@@ -48,6 +48,28 @@ df_res<- read_csv(paste0(res, "output.csv")) |>
   select(1,2,4:10)
 ```
 
+#overall results when exposure and visit interaction term is non-significant
+```{r}
+filtered_data <- df_res |> 
+  filter(term %in% c("BCEP", "BDCIPP", "DNBP", "DPHP")) |>
+  mutate(outcome_set = recode(outcome_set, "Parent" = "Caregiver", "Child" = "Adolescent")) |>
+  mutate(estimate_conf = sprintf("%.3f (%.3f, %.3f)", estimate, conf_low, conf_high)) |>
+  select(c(1,10, 6:8)) |>
+  pivot_wider(
+    names_from = term,      
+    values_from = estimate_conf
+  ) |>
+  arrange(outcome_set, outcome_category)
+
+write_csv(filtered_data, "~/Documents/ope_ssis/result/mansc_oct/mansc_tbl.csv")
+```
+
+#window specific associations
+```{r}
+df_ts<- df_res |> filter(p_value<0.1)
+```
+
+
 ```{r}
 sequence <- 1:810
 repetition_indices <- c(rep(sequence[1:54], each = 8), rep(sequence[55:81], each = 6), rep(sequence[82:108], each = 8))
@@ -108,7 +130,9 @@ result <- df_res |>
 ```
 
 ```{r}
-write_csv(result, paste0(res, "output_summary.csv"))
+#write_csv(result, paste0(res, "output_summary.csv"))
+
+result<- read_csv(paste0(res, "output_summary.csv"))
 
 x<- result |> filter(chemical =="DPHP", outcome_label == "Hyperactivity_inattention", visit == "Prenatal_16W", outcome_set == "Caregiver")
 ```
@@ -132,7 +156,11 @@ result$visit <- factor(result$visit, levels = c(
 ```{r}
 cbbPalette <- c("#D55E00", "#0072B2")
 
-ggplot(result, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = conf_high)) + 
+#creating seperate plots for caregiver and adolescent
+result_cg<- result |> filter(outcome_set == "Caregiver")
+result_adl<- result |> filter(outcome_set == "Adolescent")
+
+ggplot(result_cg, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = conf_high)) + 
   geom_pointrange(aes(color = ifelse(conf_low <= 0 & conf_high >= 0, "Contains 0", "Doesn't contain 0")), 
                   position = position_dodge(width = 0.5), size = 0.6)+
   geom_vline(aes(xintercept = 0), linetype="dashed") + 
@@ -162,7 +190,7 @@ ggplot(result, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = con
 
 #export
 ```{r}
-ggsave(paste0(res, "gee_glm.tiff"), 
+ggsave(paste0(res, "gee_glm_caregiv.tiff"), 
        width = 18,height = 10,
        dpi=300)
 ```
@@ -205,7 +233,7 @@ x<- sex_df_care_giv |> filter(chemical =="DPHP", outcome_label == "Hyperactivity
 
 #reorder y axis levels
 ```{r}
-sex_df_care_giv$visit <- factor(sex_df_care_giv$visit, levels = c(
+sex_df_adole$visit <- factor(sex_df_adole$visit, levels = c(
   "Prenatal_16W",
   "Prenatal_26W",
   "Delivery",
@@ -216,19 +244,19 @@ sex_df_care_giv$visit <- factor(sex_df_care_giv$visit, levels = c(
   "Child_8_yr"
 ))
 
-sex_df_care_giv$gender <- factor(sex_df_care_giv$gender, 
+sex_df_adole$gender <- factor(sex_df_adole$gender, 
                                  levels = c( "Female", "Male" ))
 ```
 
 ```{r}
 cbbPalette <- c("#D55E00", "#0072B2")
 
-ggplot(sex_df_care_giv, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = conf_high, 
+ggplot(sex_df_adole, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, xmax = conf_high, 
                             shape= gender)) + 
   geom_pointrange(aes(color = ifelse(conf_low <= 0 & conf_high >= 0, "Contains 0", "Doesn't contain 0")), 
                   position = position_dodge(width = 0.8), size = 0.6)+
   geom_vline(aes(xintercept = 0), linetype="dashed") + 
-  facet_nested(outcome_set+chemical ~ outcome_category+outcome_label, scales="free")+
+  facet_nested(chemical+gender ~ outcome_category+outcome_label, scales="free")+
   scale_colour_manual(values=cbbPalette) +
   labs(y=NULL,
        x=expression(paste(beta[GEE-glm]," [95% CI]")),
@@ -257,8 +285,8 @@ ggplot(sex_df_care_giv, aes(y = fct_rev(visit), x = estimate, xmin = conf_low, x
 ```
 
 ```{r}
-ggsave(paste0(res, "/strata_sex/caregiver_reported.tiff"), 
-       width = 18,height = 10,
+ggsave(paste0(res, "/strata_sex/adolescent_reported.tiff"), 
+       width = 18,height = 11,
        dpi=300 )
 ```
 

@@ -1,0 +1,94 @@
+---
+title: "07_visit_specific_results_linear_combination"
+author: "Puvvula"
+date: "2024-10-15"
+output: pdf_document
+---
+
+```{r}
+load("~/Documents/ope_ssis/result/gee_mi_res_march/imp_dat_dphp_pb_std_score_p_dphp.rda")
+
+m_1<-fit$analyses[20][[1]]
+
+m_1$formula <- as.formula(gsub("log\\(get\\(exposure\\)\\)", "dphp", deparse(m_1$formula)))
+names(m_1$coefficients) <- gsub("log\\(get\\(exposure\\)\\)", "dphp", names(m_1$coefficients))
+
+confint(
+  multcomp::glht(
+    m_1, 
+    linfct = c("dphp=0",
+               "dphp + dphp:visitprenatal_26W=0",
+               "dphp + dphp:visitdelivery=0",
+               "dphp + dphp:visitpostnatal_1_yr=0",
+               "dphp + dphp:visitpostnatal_2_yr=0",
+               "dphp + dphp:visitpostnatal_3_yr=0",
+               "dphp + dphp:visitpostnatal_5_yr=0",
+               "dphp + dphp:visitpostnatal_8_yr=0")
+  )
+) |>
+  (\(ci) {
+    ci_data <- as.data.frame(ci$confint)
+    rownames(ci_data) <- rownames(ci$confint)
+    ci_data[] <- lapply(ci_data, function(x) sprintf("%.3f", x))
+    ci_data
+  })()
+```
+
+#linear combination result - problem behavior - main figure
+```{r}
+df<- read_csv("~/Documents/ope_ssis/result/gee_mi_res_march/final_main_fig.csv") |>
+  separate(est_ci, 
+           into = c("est", "ll_ul"),
+           sep = " \\(", 
+           extra = "merge") %>%
+  separate(ll_ul, 
+           into = c("ll", "ul"),
+           sep = " ", 
+           extra = "merge") %>%
+  mutate(ul = gsub("\\)", "", ul)) %>%
+  mutate(across(c(est, ll, ul), as.numeric),
+         ci_null = (ll <=0 & ul >=0)) 
+```
+
+#plotting
+```{r}
+df$visit<- factor(df$visit, levels = c("16W", "26W", "Delivery",
+                                       "1Y", "2Y", "3Y", "5Y", "8Y"))
+
+df$outcome<- factor(df$outcome, levels = c("Problem behavior- Caregiver reported",
+                                           "Internalizing- Caregiver reported"))
+
+cbbPalette <- c("#0072B2", "black")
+
+ggplot(df, aes(x = as.factor(visit), y = est, ymin = ll, ymax = ul, shape = outcome)) + 
+  geom_pointrange(aes(col = as.factor(ci_null)), 
+                  position = position_dodge(width = 0.5), size = 0.6) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed", color = "gray50") + 
+  scale_colour_manual(values = cbbPalette) +
+  labs(x = NULL,
+       y = expression(paste(beta[MIM], " [95% CI] ")),
+       title = "",
+       caption = "") +
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"),
+        strip.background = element_rect(fill = "white"),
+        strip.text = element_text(size = 12, face = "bold"),
+        axis.title.x = element_text(size = 10, color = "black"),
+        axis.title.y = element_text(size = 10, color = "black"),
+        legend.position = "bottom",               # Move legend to the bottom
+        legend.direction = "horizontal",          # Items in a single row
+        legend.title = element_blank()) +         # Remove legend title
+  guides(col = "none", 
+         shape = guide_legend(title = "", ncol = 2, 
+                              override.aes = list(size = 4))) +  # Increase shape size in legend
+  facet_grid(biomarker ~ ., switch = "x", space = "free_x")
+
+```
+
+```{r}
+ggsave(paste0("~/Documents/ope_ssis/result/gee_mi_res_march/final_main_fig_problmBEHA_caregiv.tiff"), 
+       width = 8,height = 6,
+       dpi=300,
+       bg="white")
+```
+

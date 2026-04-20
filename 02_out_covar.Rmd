@@ -17,7 +17,8 @@ res<- "~/Documents/ope_ssis/result/"
 ```{r}
 outcome<- read_csv(paste0(dat_loc, "raw/new_set/SSiS_20230804.csv")) |>
   clean_names() |>
-  drop_na()
+  drop_na() |>
+  select(c(1,2,10,15,23))
 
 
 #6 observations with missing outcome are removed
@@ -38,17 +39,19 @@ covariates <- read_csv(paste0(dat_loc, "raw/HOME_Data_20220810_tailored_OPE.csv"
   mutate(rfr_gs_t = if_else(is.na(rfr_gs_t), median(rfr_gs_t, na.rm = TRUE), rfr_gs_t),
          bdi_p4 = ifelse(bdi_p4 <= 13, "min_depression", "higher_depression"))|>
   mutate_if(is.character, as.factor)
-
 ```
 
 #join exposure and covariates (n=236) 236*38
 ```{r}
 out_cov<- outcome |>
   left_join(covariates, by="participant_id") |>
-  select(-c(40:45)) |> # PBDEs (sigma-PBDEs has 59 observations with NA)
+  select(-c(17:22)) |> # PBDEs (sigma-PBDEs has 59 observations with NA)
   drop_na() # 14 observations with missing all covariate data
 
 write_csv(out_cov, paste0(dat_loc, "out_cov.csv"))
+
+#new version Jan 2025
+write_csv(out_cov, "~/Documents/ope_ssis/res_sing_imput/out_cov.csv")
 ```
 
 

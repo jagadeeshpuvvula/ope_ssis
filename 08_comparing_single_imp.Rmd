@@ -1,0 +1,1294 @@
+---
+title: "08_comparing_single_imp"
+author: "Jagadeesh Puvvula"
+date: "2025-01-08"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, haven, geepack, truncnorm, pracma, ggh4x, gtsummary)
+
+dat_loc <- "~/Documents/ope_ssis/data/"
+res<- "~/Documents/ope_ssis/result/"
+```
+
+#outcome and covariates data [n=236]
+```{r}
+outcom_cov<- read_csv("~/Documents/ope_ssis/res_sing_imput/out_cov.csv")
+```
+
+#ope data - pre and post natal exposure data received from aimin on Dec 13, 2023
+```{r}
+dat_1<- read_sas(paste0(dat_loc, "raw/dec_23_new_ver/ur_fr_sg_20210921.sas7bdat"))
+dat_2<- read_sas(paste0(dat_loc, "raw/dec_23_new_ver/ur_fr_12y.sas7bdat"))
+
+ope_dat<- bind_rows(dat_1, dat_2)
+
+ope_exp_raw<- ope_dat |>
+  clean_names() |>
+  filter(!analyte_code %in% c("DBzP", "DCP", "TBBA", "BCPP", "iPPPP", "tBPPP"))|>
+  group_by(visit) |>
+  mutate(specific_gravity = if_else(is.na(specific_gravity) | specific_gravity == 1,  
+                                    median(specific_gravity, na.rm = TRUE),  
+                                    specific_gravity)) |>
+  ungroup() |>
+  mutate(visit = case_when(
+    visit == "16W" ~ "prenatal_16W",
+    visit == "26W" ~ "prenatal_26W",
+    visit == "Birth" ~ "delivery",
+    visit == "12M" ~ "postnatal_1_yr",
+    visit == "24M" ~ "postnatal_2_yr",
+    visit == "36M" ~ "postnatal_3_yr",
+    visit == "60M" ~ "postnatal_5_yr",
+    visit == "P3" ~ "postnatal_8_yr",
+    visit == "P4" ~ "postnatal_12_yr",
+    TRUE ~ as.character(visit)
+  )) |>
+  mutate(analyte_code = fct_recode(as.factor(analyte_code), 
+                             bcep = "BCEtP", bdcipp = "BDCPP", 
+                             dnbp = "DBuP", dphp = "DPhP")) |>
+  select(-c(unit, comment, barcode, barcode_creat, barcode_sg, 
+            flg_match_creat, code_nr, flg_match_sg, analyte_lod, collection_month, creat)) |>
+  mutate(flg_lod = if_else(is.na(flg_lod) | flg_lod != 1, 0, flg_lod),
+         flg_nr = if_else(is.na(flg_nr) | flg_nr != 1, 0, flg_nr)) |>
+  #mutate(result = if_else(flg_lod == 1, 0.1/sqrt(2), result)) |>
+  #select(-c(flg_nr, flg_lod)) |>
+  #handling duplicate values for observations
+  filter(participant_id %in% outcom_cov$participant_id) |>
+  group_by(participant_id, visit, analyte_code) |>
+  mutate(avg_result = mean(result)) |>
+  distinct(participant_id, visit, analyte_code, .keep_all = TRUE) |>
+  ungroup() |>
+  select(-result) |>
+  rename(result = avg_result) 
+
+
+
+ope_exp_raw_si <- ope_exp_raw  |>
+  pivot_wider(names_from = analyte_code, values_from = result) |>
+  mutate(across(3:7, ~ as.numeric(sprintf("%.3f", .)))) |>
+  mutate(across(c(bcep, bdcipp, dnbp, dphp), ~ if_else(. < 0.1, 1, 0), .names = "ind_{.col}")) |>
+  mutate(across(c(bcep, bdcipp, dnbp, dphp), ~ if_else(is.na(.), 1, 0), .names = "ind_na_{.col}")) |>
+  mutate(across(8:11, ~ replace_na(., 0))) |>
+  mutate(across(4:7, ~ replace_na(., 0.5)))  |>
+  left_join(outcom_cov, by = "participant_id") |>
+  mutate(across(where(is.character), as.factor))
+```
+
+#exposure summary
+```{r}
+exp_summ <- ope_exp_raw %>%
+  select(1:5) %>%
+  distinct() %>%
+  mutate(
+    # Handle NAs first
+    flg_nr = if_else(is.na(flg_nr), 0, flg_nr),
+    flg_lod = if_else(is.na(flg_lod), 0, flg_lod),
+    
+    # Create mutually exclusive categories
+    status = case_when(
+      flg_nr == 1 ~ "Not Reported",
+      flg_lod == 1 ~ "Below LOD",
+      TRUE ~ "Detected"
+    )
+  ) %>%
+  group_by(analyte_code, visit) %>%
+  summarise(
+    count = n(),
+    not_reported = paste(sum(status == "Not Reported"), 
+                         "(", round(mean(status == "Not Reported") * 100, 2), "%)", sep = ""),
+    below_lod = paste(sum(status == "Below LOD"), 
+                      "(", round(mean(status == "Below LOD") * 100, 2), "%)", sep = ""),
+    detected = paste(sum(status == "Detected"), 
+                     "(", round(mean(status == "Detected") * 100, 2), "%)", sep = ""),
+    .groups = "drop"
+  )
+```
+
+#detection pattern viz
+```{r}
+detect_viz <- ope_exp_raw |>
+  select(1:5) |>
+  mutate(participant_id = dense_rank(participant_id))|>
+  distinct() |>
+  mutate(
+    # Handle NAs first
+    flg_nr = if_else(is.na(flg_nr), 0, flg_nr),
+    flg_lod = if_else(is.na(flg_lod), 0, flg_lod),
+    
+    # Create mutually exclusive categories
+    status = case_when(
+      flg_nr == 1 ~ "Not Reported",
+      flg_lod == 1 ~ "Below LOD",
+      TRUE ~ "Detected"
+    )
+  ) |>
+  select(-c(4,5)) |>
+  mutate(
+  analyte_code = toupper(analyte_code),
+  visit = recode(visit,
+    "prenatal_16W" = "Gestational-16W",
+    "prenatal_26W" = "Gestational-26W" ,
+    "postnatal_1_yr" = "Child-1YR",
+    "postnatal_2_yr" = "Child-2YR",
+    "postnatal_3_yr" = "Child-3YR",
+    "postnatal_5_yr" = "Child-5YR",
+    "postnatal_8_yr" = "Child-8YR",
+    "postnatal_12_yr" = "Child-12YR",
+    .default = visit  # This keeps any unspecified levels as they are
+  ),
+  visit = str_to_title(visit)
+  ) |>
+  complete(
+    analyte_code, 
+    visit, 
+    participant_id = unique(participant_id),  # Explicit 236 participants
+    fill = list(status = "Unmeasured")
+  ) |>
+  mutate(analyte_visit = paste(analyte_code, visit, sep = "-"))
+
+# Define the desired order for y-axis labels
+custom_order <- c(
+  "BCEP-Gestational-16w", "BCEP-Gestational-26w", "BCEP-Delivery",
+  "BCEP-Child-1yr", "BCEP-Child-2yr", "BCEP-Child-3yr",
+  "BCEP-Child-5yr", "BCEP-Child-8yr", "BCEP-Child-12yr",
+  
+  "BDCIPP-Gestational-16w", "BDCIPP-Gestational-26w", "BDCIPP-Delivery",
+  "BDCIPP-Child-1yr", "BDCIPP-Child-2yr", "BDCIPP-Child-3yr",
+  "BDCIPP-Child-5yr", "BDCIPP-Child-8yr", "BDCIPP-Child-12yr",
+  
+  "DNBP-Gestational-16w", "DNBP-Gestational-26w", "DNBP-Delivery",
+  "DNBP-Child-1yr", "DNBP-Child-2yr", "DNBP-Child-3yr",
+  "DNBP-Child-5yr", "DNBP-Child-8yr", "DNBP-Child-12yr",
+  
+  "DPHP-Gestational-16w", "DPHP-Gestational-26w", "DPHP-Delivery",
+  "DPHP-Child-1yr", "DPHP-Child-2yr", "DPHP-Child-3yr",
+  "DPHP-Child-5yr", "DPHP-Child-8yr", "DPHP-Child-12yr"
+)
+
+ggplot(detect_viz, aes(x = participant_id, 
+                       y = factor(analyte_visit, levels = rev(custom_order)), 
+                       fill = factor(status))) +
+  geom_tile(width = 0.9, height = 0.9) +
+  scale_y_discrete(expand = c(0, 0)) +
+  scale_x_continuous(limits = c(-1, 237), expand = c(0, 0)) +  # Specify x-axis limits
+  geom_hline(yintercept = c(9.5, 18.5, 27.5, 36.5), 
+             color = "grey10", linetype = "solid", size =1) +
+  coord_cartesian(clip = "off") +
+  scale_fill_manual(values = c("Detected" = "#0072B2", "Below LOD" = "#E69F00", 
+                               "Not Reported" = "#D55E00",
+                               "Unmeasured" = "#999999")) +
+  labs(title = "", x = "Study participants (n=236)", y = "Urinary OPE metabolite measurements") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_blank(),  
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_text(size=10),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    legend.key.width = unit(0.8, "cm"),
+    legend.key.height = unit(0.3, "cm"),
+    legend.title = element_blank(),
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0)
+  )
+
+ggsave("~/Documents/ope_ssis/res_sing_imput/missing_pattern.tiff", 
+       bg="white",
+       width = 10,height = 6,
+       dpi=300)
+```
+
+#Left-truncated single imputation
+```{r}
+#impute with LOD/sqrt-2
+ope_exp_raw <- ope_exp_raw |> 
+  mutate(result = ifelse(flg_lod == 1, 0.1/sqrt(2), result),
+         log2_result = log2(result))
+
+#generate distribution summary
+LODmeansd.all <- ope_exp_raw |> 
+  group_by(analyte_code, visit) |> 
+  summarise(meanlog2 = mean(log2_result, na.rm= TRUE), sdlog2 = sd(log2_result, na.rm=TRUE)) |> 
+  mutate(test.name = (paste0(analyte_code, ".t", visit)))
+
+# Create all combinations of analyte_code and visit
+combinations <- expand.grid(
+  analyte_code = unique(ope_exp_raw$analyte_code),
+  visit = unique(ope_exp_raw$visit)
+)
+
+#perform imputation
+results <- combinations |>
+  pmap_dfr(~ process_combination(.x, .y)) |>
+  rename(imputed_res = analyte_result) |>
+  select(c(1:4))
+```
+
+#add single imputations to ope_data
+#re-load the ope_exp_raw data to join
+```{r}
+ope_df<- results |>
+  right_join(ope_exp_raw, by = c("participant_id", "analyte_code", "visit")) |>
+  do({
+    # For each visit group, calculate the median of specific_gravity
+    median_sg <- median(.$specific_gravity, na.rm = TRUE)
+    
+    # Apply the mutate operation for result_sg_adj and round it
+    . |> 
+      mutate(
+        result_sg_adj = imputed_res * (median_sg - 1) / (specific_gravity - 1),
+        result_sg_adj = round(result_sg_adj, 3)
+      )
+  }) |> 
+  ungroup() 
+```
+
+#export clean exposure data
+```{r}
+write_csv(ope_df, "~/Documents/ope_ssis/res_sing_imput/ope_processed_df_feb182025.csv")
+```
+
+#participant volume by visit and ICC calculation
+```{r}
+ope_df<- read_csv("~/Documents/ope_ssis/res_sing_imput/ope_processed_df_feb182025.csv") |>
+  select(c(1:3,10)) 
+
+#full summary
+summary_table <- ope_df |>
+    mutate(period = if_else(str_starts(visit, "postnatal"),
+                            "child",
+                            "gestation")) |>
+    distinct(participant_id, visit, period) |>
+    group_by(participant_id, period) |>
+    summarise(n_visits = n(), .groups = "drop") |>
+    pivot_wider(names_from = period, values_from = n_visits, values_fill = 0) |>
+    mutate(lifetime = gestation + child) |>
+    count(gestation, child, lifetime, name = "n_participants")
+
+#for publication summary
+summary_table <- ope_df |>
+  mutate(period = if_else(str_starts(visit, "postnatal"),
+                          "child",
+                          "gestation")) |>
+  distinct(participant_id, visit, period) |>
+  group_by(participant_id, period) |>
+  summarise(n_visits = n(), .groups = "drop") |>
+  pivot_wider(names_from = period, values_from = n_visits, values_fill = 0) |>
+  mutate(
+    lifetime = gestation + child,
+    gestation_group = if_else(gestation < 2, "<2", "≥2"),
+    child_group = if_else(child < 4, "<4", "≥4"),
+    lifetime_group = if_else(lifetime < 6, "<6", "≥6")
+  ) |>
+  count(gestation_group, child_group, lifetime_group, name = "n_participants")
+
+
+#ICC
+ope_icc<- ope_df |>
+  mutate(
+    visit = recode(visit,
+                   "prenatal_16W" = "v1", "prenatal_26W" = "v2", "delivery" = "v3",
+                   "postnatal_1_yr" = "v4", "postnatal_2_yr" = "v5", "postnatal_3_yr" = "v6",
+                   "postnatal_5_yr" = "v7", "postnatal_8_yr" = "v8",  "postnatal_12_yr" = "v9"  )) |>
+  filter(!(analyte_code == "dnbp" & visit %in% c("v4", "v5"))) |>
+  filter(visit %in% c("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9")) 
+
+#"v1", "v2", "v3",
+
+
+library(lme4)
+
+calc_icc_lme <- function(df, analyte) {
+  
+  # Auto-detect visits present in the data for this analyte
+  visits_present <- df %>%
+    filter(analyte_code == analyte, 
+           result_sg_adj > 0,
+           !is.na(result_sg_adj)) %>%
+    distinct(visit) %>%
+    pull(visit) %>%
+    sort()
+  
+  cat("\n--- Analyte:", analyte, "---\n")
+  cat("Visits detected:", paste(visits_present, collapse = ", "), "\n")
+  cat("N visits:", length(visits_present), "\n")
+  
+  dat <- df %>%
+    filter(
+      analyte_code == analyte,
+      visit %in% visits_present,
+      result_sg_adj > 0,
+      !is.na(result_sg_adj)
+    ) %>%
+    mutate(log_result = log(result_sg_adj))
+  
+  cat("N rows:", nrow(dat), "\n")
+  cat("Var (raw):", round(var(dat$result_sg_adj), 3), "\n")
+  cat("Var (log):", round(var(dat$log_result), 3), "\n")
+  
+  model <- lmer(log_result ~ 1 + (1 | participant_id),
+                data = dat,
+                REML = TRUE,
+                control = lmerControl(
+                  optimizer = "bobyqa",
+                  optCtrl   = list(maxfun = 2e5)
+                ))
+  
+  vc          <- as.data.frame(VarCorr(model))
+  var_between <- vc$vcov[1]
+  var_within  <- vc$vcov[2]
+  icc         <- var_between / (var_between + var_within)
+  
+  tibble(
+    analyte_code    = analyte,
+    visits_used     = paste(visits_present, collapse = ", "),  # track which visits were used
+    n_visits        = length(visits_present),
+    n_obs           = nrow(dat),
+    n_participants  = n_distinct(dat$participant_id),
+    var_between     = round(var_between, 3),
+    var_within      = round(var_within, 3),
+    ICC             = round(icc, 2),
+    reproducibility = case_when(
+      icc <= 0.40              ~ "Poor",
+      icc > 0.40 & icc < 0.75 ~ "Fair to Good",
+      icc >= 0.75              ~ "Excellent"
+    )
+  )
+}
+
+# --- Run --- 
+analytes        <- unique(ope_icc$analyte_code)
+icc_lme_results <- map_dfr(analytes, ~ calc_icc_lme(ope_icc, .x))
+print(icc_lme_results)
+```
+
+#visualize concentrations by visit
+```{r}
+ope_viz <- ope_df |>
+  mutate(
+    analyte_code = toupper(analyte_code),
+    visit = recode(visit, "prenatal_16W" = "16W", "prenatal_26W" = "26W", "delivery" = "Delivery",
+                   "postnatal_1_yr" = "1Y", "postnatal_2_yr" = "2Y", "postnatal_3_yr" = "3Y",
+                   "postnatal_5_yr" = "5Y", "postnatal_8_yr" = "8Y",  "postnatal_12_yr" = "12Y"),
+    visit = factor(visit, levels = c("16W","26W","Delivery","1Y","2Y","3Y","5Y","8Y","12Y")),
+    stage = case_when(
+      visit %in% c("16W","26W","Delivery") ~ "Gestation",
+      TRUE ~ "Childhood"
+    )
+  ) |>
+  filter(!(analyte_code == "DNBP" & visit %in% c("1Y", "2Y")))
+
+ggplot(ope_viz, aes(x = visit, y = log2(result_sg_adj),
+                    group = participant_id, color = stage)) +
+  geom_line(alpha = 0.1) +
+  geom_point(alpha = 0.1, size = 1) +
+  facet_wrap(~ analyte_code, scales = "free_y") +
+  scale_color_manual(
+    values = c("Gestation" = "#D55E00",
+               "Childhood" = "#0072B2"),
+    guide = guide_legend(override.aes = list(alpha = 1, size = 3))
+  ) +
+  theme_minimal() +
+  labs(x = "Visit",
+       y = "OPE Concentration-Log2 & SG-standardized",
+       color = "Exposure Window") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.line = element_line(colour = "black"),
+    legend.position = "bottom"
+  )
+
+ggsave("~/Documents/ope_ssis/exp_by_visit.tiff", 
+       width = 7, height = 6, 
+       dpi = 300, bg = "white")
+```
+
+
+#join exposures with outcome and covariates
+```{r}
+ope_df<- read_csv("~/Documents/ope_ssis/res_sing_imput/ope_processed_df_feb182025.csv") |>
+  select(c(1:3,10)) |>
+  pivot_wider(
+    names_from = analyte_code,
+    values_from = result_sg_adj
+  )
+
+analy_df<- right_join(ope_df, outcom_cov, by="participant_id")
+
+write_csv(analy_df, "~/Documents/ope_ssis/res_sing_imput/ope_ssis_fin_feb182025.csv")
+```
+
+#visualizing repeated exposures
+```{r}
+#visualize data
+viz_df <- ope_ssis |> 
+  select(c(1:6)) |>
+  mutate(visit_numeric = as.numeric(gsub("V", "", visit))) |> 
+  pivot_longer(cols = c(bcep, bdcipp, dnbp, dphp), names_to = "chemical", values_to = "value") |>
+  filter(!(chemical == "dnbp" & visit %in% c("V4", "V5"))) |>
+  filter(value < 250) |>
+  mutate(chemical = toupper(chemical))  # Convert 'chemical' to uppercase
+
+ggplot(viz_df, aes(x = visit_numeric, 
+                   y = value, 
+                   color = chemical, 
+                   group = interaction(participant_id, chemical))) +
+  geom_line(alpha = 0.5, linewidth = 0.25) +
+  geom_point(alpha = 0.25) +
+  facet_grid(chemical~., scale = "free")+
+  stat_summary(aes(group = chemical), fun = median, geom = "line", 
+               linewidth = 1., linetype = "solid", color = "grey25") +
+  scale_y_continuous(trans = "log2", labels = label_number(accuracy = 0.01)) +
+  scale_x_continuous(breaks = 1:9, labels = paste0("V", 1:9)) +
+  labs(x = "Visit", y = "Concentration", color = "OPE biomarker") +
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+ggsave("~/Documents/ope_ssis/res_sing_imput/exp_ovr_time.tiff",
+       width = 9,
+       height = 6,
+       bg = "white",
+       dpi=300)
+```
+
+# Complete solution with proper handling of all edge cases
+# Calculate AUC for multiple variables (bcep, bdcipp, dnbp, dphp)
+# Use calculation suggested by aimin: https://trumpexcel.com/calculate-area-under-curve-excel/ 
+```{r}
+#gestational age | Some participants dont have NA which is again creating a problem
+ga_w<- haven::read_sas("~/Documents/prenatal_OPFR/outcome_ga.sas7bdat") |>
+  clean_names() |>
+  drop_na() |>
+  mutate(ga = as.integer(ga))
+
+#summary of ope exposures for supplement table
+read_csv("~/Documents/ope_ssis/res_sing_imput/ope_ssis_fin_feb182025.csv") |>
+  mutate(across(where(is.character), as.factor)) |>
+  mutate(dnbp = dplyr::case_when(visit %in% c("postnatal_1_yr", "postnatal_2_yr") ~ NA_real_, 
+                                TRUE ~ dnbp)) |>
+  select(c(2:6)) |>
+  tbl_summary(
+    by=visit,
+    
+  )
+
+# Read and prepare data
+ope_ssis <- read_csv("~/Documents/ope_ssis/res_sing_imput/ope_ssis_fin_feb182025.csv") |>
+  mutate(across(where(is.character), as.factor)) |>
+  mutate(dnbp = dplyr::case_when(visit %in% c("postnatal_1_yr", "postnatal_2_yr") ~ NA_real_, 
+                                TRUE ~ dnbp)) |>
+  mutate(
+    visit = recode(visit, 
+                  "prenatal_16W" = "16",
+                  "prenatal_26W" = "26"),
+    
+    visit = case_when(
+    visit == "delivery" ~ as.character(
+      ifelse(is.na(ga_w$ga[match(participant_id, ga_w$participant_id)]),
+             39,
+             ga_w$ga[match(participant_id, ga_w$participant_id)])
+    ),
+    visit == "postnatal_1_yr" ~ as.character(
+      ifelse(is.na(ga_w$ga[match(participant_id, ga_w$participant_id)]),
+             39,
+             ga_w$ga[match(participant_id, ga_w$participant_id)]) + 52
+    ),
+    visit == "postnatal_2_yr" ~ as.character(
+      ifelse(is.na(ga_w$ga[match(participant_id, ga_w$participant_id)]),
+             39,
+             ga_w$ga[match(participant_id, ga_w$participant_id)]) + 104
+    ),
+    visit == "postnatal_3_yr" ~ as.character(
+      ifelse(is.na(ga_w$ga[match(participant_id, ga_w$participant_id)]),
+             39,
+             ga_w$ga[match(participant_id, ga_w$participant_id)]) + 156
+    ),
+    visit == "postnatal_5_yr" ~ as.character(
+      ifelse(is.na(ga_w$ga[match(participant_id, ga_w$participant_id)]),
+             39,
+             ga_w$ga[match(participant_id, ga_w$participant_id)]) + 260
+    ),
+    visit == "postnatal_8_yr" ~ as.character(
+      ifelse(is.na(ga_w$ga[match(participant_id, ga_w$participant_id)]),
+             39,
+             ga_w$ga[match(participant_id, ga_w$participant_id)]) + 416
+    ),
+    visit == "postnatal_12_yr" ~ as.character(
+      ifelse(is.na(ga_w$ga[match(participant_id, ga_w$participant_id)]),
+             39,
+             ga_w$ga[match(participant_id, ga_w$participant_id)]) + 624
+    ),
+    TRUE ~ visit
+  ),
+  visit = as.numeric(visit)
+  )|>
+  select(participant_id, visit, bcep, bdcipp, dnbp, dphp)|>
+  filter(visit>80)
+
+# Calculate AUC - applying logic as discussed with aimin
+calculate_auc <- function(times, concentrations) {
+  # Remove NA concentrations and corresponding times
+  valid_data <- data.frame(time = times, conc = concentrations) %>%
+    filter(!is.na(conc))
+  
+  # Sort data by time
+  ordered_data <- valid_data %>% arrange(time)
+  
+  # If no valid points, return NA
+  if(nrow(ordered_data) == 0) {
+    return(NA_real_)
+  }
+  
+  # If only one valid point, return that concentration value directly
+  if(nrow(ordered_data) == 1) {
+    return(ordered_data$conc[1])
+  }
+  
+  # Calculate AUC using trapezoidal rule
+  auc <- 0
+  for(i in 1:(nrow(ordered_data)-1)) {
+    time_diff <- ordered_data$time[i+1] - ordered_data$time[i]
+    avg_conc <- (ordered_data$conc[i+1] + ordered_data$conc[i]) / 2
+    auc <- auc + (time_diff * avg_conc)
+  }
+  
+  # Normalize AUC by total time span (last visit - first visit)
+  time_span <- max(ordered_data$time) - min(ordered_data$time)
+  normalized_auc <- auc / time_span
+  
+  return(normalized_auc)
+}
+
+# Apply the AUC calculation to your dataset directly
+calculate_metabolite_aucs <- function(data) {
+  # Get unique participant IDs
+  participants <- unique(data$participant_id)
+  
+  # Initialize results dataframe
+  results <- data.frame(
+    participant_id = numeric(),
+    bcep_auc = numeric(),
+    bdcipp_auc = numeric(),
+    dnbp_auc = numeric(),
+    dphp_auc = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  # Calculate AUC for each participant and each metabolite
+  for(pid in participants) {
+    participant_data <- data %>% filter(participant_id == pid)
+    
+    bcep_auc <- calculate_auc(participant_data$visit, participant_data$bcep)
+    bdcipp_auc <- calculate_auc(participant_data$visit, participant_data$bdcipp)
+    dnbp_auc <- calculate_auc(participant_data$visit, participant_data$dnbp)
+    dphp_auc <- calculate_auc(participant_data$visit, participant_data$dphp)
+    
+    results <- rbind(results, data.frame(
+      participant_id = pid,
+      bcep_auc = bcep_auc,
+      bdcipp_auc = bdcipp_auc,
+      dnbp_auc = dnbp_auc,
+      dphp_auc = dphp_auc
+    ))
+  }
+  
+  return(results)
+}
+
+# Run the function on your dataset
+auc_results <- calculate_metabolite_aucs(ope_ssis)
+```
+
+#OPE estimation by trapezoid method
+```{r}
+#life-time OPE exposure - trapezoid estimation
+ope_life<- auc_results |> rename_with(~ paste0(.x, "_life"), ends_with("auc"))
+
+#gestational OPE exposure - trapezoid estimation
+ope_gest<- auc_results |> rename_with(~ paste0(.x, "_gest"), ends_with("auc"))
+
+#gestational OPE exposure - trapezoid estimation
+ope_child<- auc_results |> rename_with(~ paste0(.x, "_child"), ends_with("auc"))
+
+#join different sections
+ope_exposures <- reduce(list(ope_life, ope_gest, ope_child), full_join, by = "participant_id")
+
+#created on March 21 - calculations as recommended by Aimin
+write_csv(ope_exposures, "~/Documents/ope_ssis/res_sing_imput/ope_trap_aggr.csv")
+```
+
+#outcome correlation heatmap
+```{r}
+cov_out<- read_csv("~/Documents/ope_ssis/res_sing_imput/ope_ssis_fin_feb182025.csv") |>
+  select(c(1,7:11)) |>
+  distinct() |>
+  rename(`Self-reported social skill` = "ss_std_score_c",
+         `Caregiver-reported social skill` = "ss_std_score_p",
+         `Self-reported problem behavior` = "pb_std_score_c",
+         `Caregiver-reported problem behavior` = "pb_std_score_p")
+
+# Compute correlations for Overall, Male, and Female
+cor_overall_df <- cov_out |>
+  select(all_of(vars)) |>
+  cor(use = "pairwise.complete.obs", method = "spearman") |>
+  melt() |>
+  mutate(group = "Overall") |>
+  rowwise() |>
+  mutate(p_value = cor.test(cov_out[[Var1]], cov_out[[Var2]], method = "spearman", exact = FALSE)$p.value)
+
+cor_male_df <- cov_out |>
+  filter(gender == "Male") |>
+  select(all_of(vars)) |>
+  cor(use = "pairwise.complete.obs", method = "spearman") |>
+  melt() |>
+  mutate(group = "Male") |>
+  rowwise() |>
+  mutate(p_value = cor.test(cov_out[[Var1]], cov_out[[Var2]], method = "spearman", exact = FALSE)$p.value)
+
+cor_female_df <- cov_out |>
+  filter(gender == "Female") |>
+  select(all_of(vars)) |>
+  cor(use = "pairwise.complete.obs", method = "spearman") |>
+  melt() |>
+  mutate(group = "Female") |>
+  rowwise() |>
+  mutate(p_value = cor.test(cov_out[[Var1]], cov_out[[Var2]], method = "spearman", exact = FALSE)$p.value)
+
+# Combine into single dataframe
+cor_all <- bind_rows(cor_overall_df, cor_male_df, cor_female_df)
+
+# Ensure proper factor levels to control the order of the facets
+cor_all$group <- factor(cor_all$group, levels = c("Overall", "Male", "Female"))
+
+# Add rounded coefficients and significance based on p-value
+cor_all <- cor_all %>%
+  mutate(
+    coefficient = round(value, 2),
+    significance = ifelse(p_value < 0.05, "*", "")
+  )
+
+# Plot
+ggplot(cor_all, aes(Var1, Var2, fill = coefficient)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(
+    low = "#DC143C", mid = "white", high = "#0047AB",
+    midpoint = 0, limit = c(-1, 1), space = "Lab",
+    name = "Spearman ρ"
+  ) +
+  facet_wrap(~ group, nrow = 1) +  # Separate by 'group' (Overall, Male, Female)
+  coord_fixed() +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 20, hjust = 1),
+    panel.spacing = unit(0.5, "lines"),
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm"),
+    legend.key.height = unit(0.2, "cm")
+  ) +
+  # Add text for coefficients and significance
+  geom_text(aes(label = paste(coefficient, significance)), color = "black", size = 4)
+
+ggsave("~/Documents/ope_ssis/res_sing_imput/ssis_corr.tiff", 
+       width = 12,height = 5,
+       dpi=300,
+       bg="white")
+
+#trends
+# Reshape data to long format
+cov_long <- cov_out |>
+  pivot_longer(
+    cols = c(`Self-reported social skill`, `Caregiver-reported social skill`,
+             `Self-reported problem behavior`, `Caregiver-reported problem behavior`),
+    names_to = "measure_type",
+    values_to = "score"
+  ) |>
+  mutate(
+    domain = case_when(
+      str_detect(measure_type, "social skill") ~ "Social Skill",
+      str_detect(measure_type, "problem behavior") ~ "Problem Behavior"
+    ),
+    reporter = case_when(
+      str_detect(measure_type, "Self") ~ "Self",
+      str_detect(measure_type, "Caregiver") ~ "Caregiver"
+    ),
+    reporter = factor(reporter, levels = c("Self", "Caregiver"))
+  )
+
+cov_long2 <- cov_long |> 
+  mutate(gender_facet = gender) |> 
+  bind_rows(
+    cov_long |> 
+      mutate(gender_facet = "Overall")
+  ) |>
+  mutate(gender_facet = factor(gender_facet, levels = c("Overall", "Male", "Female")))
+
+ggplot(cov_long2, aes(x = reporter, y = score, group = participant_id)) +
+  geom_line(aes(color = gender), alpha = 0.2, linewidth = 0.8) +
+  #stat_summary(aes(group = gender, color = gender), fun = median, geom = "line", linewidth = 1.5) +
+  facet_grid(domain ~ gender_facet, scales = "free_y") +
+  theme_minimal(base_size = 8) +
+  labs(
+    x = "Reporter",
+    y = "Score",
+    color = "Adolescent sex",
+    title = " "
+  ) +
+  theme(
+    strip.text = element_text(size = 6, face = "bold"),
+    legend.position = "bottom"
+  )
+
+ggsave("~/Documents/ope_ssis/res_sing_imput/ssis_trends.tiff", 
+       width = 7,height = 4,
+       dpi=300,
+       bg="white")
+```
+
+
+
+#qgcomp with aggregated data
+```{r}
+ope<- read_csv("~/Documents/ope_ssis/res_sing_imput/ope_trap_aggr.csv")
+
+cov_out<- read_csv("~/Documents/ope_ssis/res_sing_imput/ope_ssis_fin_feb182025.csv") |>
+  mutate(across(where(is.character), as.factor)) |>
+  mutate(#across(3:6, log2),
+         visit = recode(visit, 
+                        "prenatal_16W" = "V1",
+                        "prenatal_26W" = "V2",
+                        "delivery" = "V3",
+                        "postnatal_1_yr" = "V4",
+                        "postnatal_2_yr" = "V5",
+                        "postnatal_3_yr" = "V6",
+                        "postnatal_5_yr" = "V7",
+                        "postnatal_8_yr" = "V8",
+                        "postnatal_12_yr" = "V9"),
+         visit = factor(visit, levels = c("V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9"))
+         ) |>
+  select(-c(2:6)) |>
+  distinct()
+
+analy_df<- left_join(ope, cov_out, by="participant_id")
+
+write_csv(analy_df, "~/Documents/ope_ssis/res_sing_imput/ope_ssis_mar2025.csv")
+```
+
+#qgcomp
+```{r}
+analy_df<- read_csv("~/Documents/ope_ssis/res_sing_imput/ope_ssis_mar2025.csv") |>
+  mutate(cotinine = log2(cotinine),
+         lead = log2(lead),
+         cohort = "HOME") |>
+  mutate_if(is.character, as.factor) |>
+  rename(sex= gender)
+
+#AUC summary - Table 2
+df_summary <- analy_df |>
+    select(2:13) |>
+    pivot_longer(everything(), names_to = "variable", values_to = "value") |>
+    group_by(variable) |>
+    summarise(
+        median_iqr = sprintf(
+            "%.2f (%.2f, %.2f)",
+            median(value, na.rm = TRUE),
+            quantile(value, 0.25, na.rm = TRUE),
+            quantile(value, 0.75, na.rm = TRUE)
+        ),
+        mean_sd = sprintf(
+            "%.2f (%.2f)",
+            mean(value, na.rm = TRUE),
+            sd(value, na.rm = TRUE)
+        ),
+        geom_mean_sd = if (all(value > 0, na.rm = TRUE)) {
+            sprintf(
+                "%.2f (%.2f)",
+                exp(mean(log(value), na.rm = TRUE)),
+                exp(sd(log(value), na.rm = TRUE))
+            )
+        } else {
+            NA_character_
+        },
+        .groups = "drop"
+    )
+
+  
+#mixture<- names(analy_df)[6:9] #gesta (n=236)
+
+#for childhood exposure analysis (n=232)
+analy_df_chld <- analy_df |> select(c(1,10:29)) |>drop_na()
+mixture<- names(analy_df_chld)[2:5] #childhood
+
+
+qgcomp_func(outcomes = c("ss_std_score_c", "pb_std_score_c", "ss_std_score_p", "pb_std_score_p"), 
+            data = analy_df_chld, #update this step
+            output_folder = "~/Documents/ope_ssis/res_sing_imput/qgc/chld_auc", 
+            include_sex = TRUE, 
+            chemicals = list("bcep_auc_child",   "bdcipp_auc_child", "dnbp_auc_child",   "dphp_auc_child"  ),
+            covariates = list("child_race",
+                              "mat_age", "mari_st_p4", "mom_edu_p4_cat",
+                              "mid_income_p4","bdi_p4", "depression_p4_cat", "rfr_gs_t",
+                              "cotinine", "lead"),
+            q = 4, b=400, seed = 2025)
+```
+
+#adolescent sex interaction
+```{r}
+mixture<- names(analy_df_chld)[2:5] #gestational
+
+qgcomp_pval_extract <- function(outcomes, data, mixture, q) {
+  results <- lapply(outcomes, function(outcome) {
+    
+    #bcep_auc_gest + bdcipp_auc_gest + dnbp_auc_gest + dphp_auc_gest + 
+    #bcep_auc_life + bdcipp_auc_life + dnbp_auc_life + dphp_auc_life +
+    
+    formula <- as.formula(paste(outcome, "~ 
+    bcep_auc_child + bdcipp_auc_child + dnbp_auc_child + dphp_auc_child +
+    child_race + mat_age + mari_st_p4 + mom_edu_p4_cat + mid_income_p4 + bdi_p4 +
+    depression_p4_cat + rfr_gs_t + cotinine + lead"))
+    
+    result <- qgcomp.emm.noboot(formula, 
+                                expnms = mixture, 
+                                emmvar = "sex", 
+                                data = data, 
+                                family = gaussian(), 
+                                q = q)$pval
+    
+    # Return the last p-value
+    last_pval <- result[length(result)]
+    
+    return(list(
+      outcome = outcome,
+      pval = last_pval
+    ))
+  })
+  
+  # Print results
+  for(res in results) {
+    cat("Outcome:", res$outcome, "| P-value:", res$pval, "\n")
+  }
+  
+  # Return results invisibly
+  return(results)
+}
+
+# Example usage
+mixture <- names(analy_df_chld)[2:5] #gestational
+qgcomp_pval_extract(
+  outcomes = c("ss_std_score_c", "pb_std_score_c", "ss_std_score_p", "pb_std_score_p"), 
+  data = analy_df_chld,
+  mixture = mixture,
+  q = 4
+)
+
+#use qgcompint version 0.7.0 and convert dataset to a dataframe using as.data.frame
+qgcompint::qgcomp.emm.boot(
+  f = ss_std_score_c ~ sex + bcep_auc_life + bdcipp_auc_life + dnbp_auc_life + dphp_auc_life + 
+    child_race + mat_age + mari_st_p4 + mom_edu_p4_cat + mid_income_p4 + 
+    bdi_p4 + depression_p4_cat + rfr_gs_t + cotinine + lead, 
+  expnms = c('bcep_auc_life', 'bdcipp_auc_life', 'dnbp_auc_life', 'dphp_auc_life'), 
+  emmvar = "sex", 
+  data = analy_df, 
+  family = gaussian(), 
+  B=400, 
+  seed = 2025,
+  q = 4)
+```
+
+
+#get estimates
+```{r}
+results_child<- get_gcomp_estimates("~/Documents/ope_ssis/res_sing_imput/qgc/chld_auc")|> 
+  mutate(auc_category = "Childhood") |> select(-c(1,2))
+results_gesta<- get_gcomp_estimates("~/Documents/ope_ssis/res_sing_imput/qgc/gesta_auc")|> 
+  mutate(auc_category = "Gestational") |> select(-c(1,2))
+results_life<- get_gcomp_estimates("~/Documents/ope_ssis/res_sing_imput/qgc/life_auc")|> 
+  mutate(auc_category = "Lifetime")|> select(-c(1,2))
+
+est_comb<- bind_rows(results_child, results_gesta, results_life) |>
+  mutate(
+    gender = case_when(
+    str_starts(filename, "nb_Male") ~ "Male",
+    str_starts(filename, "boot_Male") ~ "Male",
+    str_starts(filename, "nb_Female") ~ "Female",
+    str_starts(filename, "boot_Female") ~ "Female",
+    str_starts(filename, "nb_all") ~ "All",
+    str_starts(filename, "boot_all") ~ "All"
+  ),
+  group = case_when(
+      str_ends(filename, "_c.rda") ~ "adolescent",
+      str_ends(filename, "_p.rda") ~ "caregiver",
+      TRUE ~ "Unknown group"
+    ),
+  boot_strp = case_when(
+      str_starts(filename, "nb_") ~ "no_boot",
+      str_starts(filename, "boot_") ~ "boot",
+      TRUE ~ "Unknown group"
+    ),
+    outcome = case_when(
+      str_detect(filename, "pb_std_score") ~ "problem behavior",
+      str_detect(filename, "ss_std_score") ~ "social skill",
+      TRUE ~ "Unknown behavior"
+    ),
+    ci_null = if_else(p_value > 0.05, "not significant", "significant")
+  )
+```
+
+#Export estimates
+```{r}
+write_csv(est_comb, "~/Documents/ope_ssis/res_sing_imput/qgc/qgc_estimates_all_auc_categ.csv")
+```
+
+#plot qgc results
+```{r}
+res_plt<- read_csv("~/Documents/ope_ssis/res_sing_imput/qgc/qgc_estimates_all_auc_categ.csv") |>
+  mutate(
+    across(c(group, outcome, auc_category, gender), str_to_title),
+    auc_category = fct_relevel(auc_category, "Gestational", "Childhood", "Lifetime"))
+
+cbbPalette <- c("#D55E00", "#0072B2")
+
+ggplot(res_plt, aes(x = as.factor(group), y = estimate, ymin = lower_ci, ymax = upper_ci)) + 
+  geom_pointrange(aes(col = as.factor(ci_null), shape=boot_strp), 
+                  position=position_dodge(width=0.5),size = 0.6) +
+  geom_hline(aes(yintercept = 0), linetype="dashed") + 
+  scale_colour_manual(values=cbbPalette) +
+  labs(x=NULL,
+       y=expression(paste(beta[Q-gcomp]," [95% CI]")),
+       title = "",
+       caption = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"))+
+  theme(plot.caption = element_text(size = 6),
+        plot.title=element_text(size = 10, hjust = 0),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        text=element_text(size=10),
+        axis.text = element_text(size = 10),
+        axis.text.x=element_text(size=10,angle=0),
+        axis.ticks.x=element_blank(),
+        strip.text.x=element_text(size=10,angle=0),
+        strip.text.y = element_text(size=10),
+        strip.placement = "outside",
+        strip.background = element_rect(fill=NULL, colour = NULL),
+        legend.box.just = "center",
+        legend.spacing = unit(0, "cm"),
+        legend.position = "bottom",
+        legend.box = "horizontal",
+        legend.direction = "horizontal",
+        legend.text = element_text(size = 8),
+        legend.key = element_blank(),
+        legend.key.height = unit(3, "mm"))+
+  guides(col="none",
+         shape=guide_legend(title = "Bootstrap"))+
+  ggh4x::facet_nested(gender~outcome+auc_category, scales = "free", switch = "x", space = "free_x")
+```
+
+```{r}
+ggsave("~/Documents/ope_ssis/res_sing_imput/qgc/qgc_auc_all.tiff", 
+       width = 11,height = 7,
+       dpi=300 )
+```
+
+#qgcomp weights
+```{r}
+qgc_wt_chld <-  extract_weights("~/Documents/ope_ssis/res_sing_imput/qgc/chld_auc") |> 
+  mutate(auc_category = "Childhood")
+qgc_wt_gesta <-  extract_weights("~/Documents/ope_ssis/res_sing_imput/qgc/gesta_auc") |> 
+  mutate(auc_category = "Gestational")
+qgc_wt_life <-  extract_weights("~/Documents/ope_ssis/res_sing_imput/qgc/life_auc") |> 
+  mutate(auc_category = "Lifetime")
+
+qgc_wt_comb<- bind_rows(qgc_wt_chld, qgc_wt_gesta, qgc_wt_life) |>
+  mutate(
+    gender = case_when(
+    str_starts(filename, "nb_Male") ~ "Male",
+    str_starts(filename, "boot_Male") ~ "Male",
+    str_starts(filename, "nb_Female") ~ "Female",
+    str_starts(filename, "boot_Female") ~ "Female",
+    str_starts(filename, "nb_all") ~ "All",
+    str_starts(filename, "boot_all") ~ "All"
+  ),
+  group = case_when(
+      str_ends(filename, "_c") ~ "adolescent",
+      str_ends(filename, "_p") ~ "caregiver",
+      TRUE ~ "Unknown group"
+    ),
+    outcome = case_when(
+      str_detect(filename, "pb_std_score") ~ "problem behavior",
+      str_detect(filename, "ss_std_score") ~ "social skill",
+      TRUE ~ "Unknown behavior"
+    ),
+    chemical = str_extract(chemical, "^[^_]+") %>%
+           str_to_upper(),
+    weight= if_else(direction=="neg", weight*-1, weight)
+  ) |>
+  mutate_if(is.numeric, ~ as.numeric(sprintf("%.2f", .)))
+
+#save weights
+rm(qgc_wt_chld, qgc_wt_gesta, qgc_wt_life)
+
+write_csv(qgc_wt_comb, "~/Documents/ope_ssis/res_sing_imput/qgc/qgc_all_weigh.csv")
+```
+
+#QGC estimates and weight table for manuscript
+```{r}
+res_plt<- read_csv("~/Documents/ope_ssis/res_sing_imput/qgc/qgc_estimates_all_auc_categ.csv")|>
+  mutate(
+    filename = str_remove(filename, "\\.rda$"),
+    across(c(group, outcome, auc_category, gender), str_to_title),
+    result = sprintf("%.2f (%.2f, %.2f)", estimate, lower_ci, upper_ci),
+    filename = str_replace(filename, "^boot_|^nb_", ""),
+    filename= paste(filename, auc_category, sep = "_")
+         ) |> 
+  select(c(1,9,12)) |>
+  pivot_wider(names_from = "boot_strp", values_from = "result")
+
+#weights
+wt<- qgc_wt_comb |>
+  mutate(
+    filename= paste(filename, auc_category, sep = "_"),
+    filename = str_replace(filename, "^boot_|^nb_", "")
+  )|> 
+  select(c(4,1,2))|> 
+  pivot_wider(names_from = "chemical", values_from = "weight") |>
+  select(c(1,8,7,6,3,4,5,2))
+
+#reorder
+custom_order <- c(
+  "all_proBEH_adole_Gestational", "all_proBEH_adole_Childhood",  "all_proBEH_adole_Lifetime",
+  "Female_proBEH_adole_Gestational",  "Female_proBEH_adole_Childhood", "Female_proBEH_adole_Lifetime",
+  "Male_proBEH_adole_Gestational", "Male_proBEH_adole_Childhood", "Male_proBEH_adole_Lifetime",
+  
+  "all_proBEH_careg_Gestational", "all_proBEH_careg_Childhood",  "all_proBEH_careg_Lifetime",
+  "Female_proBEH_careg_Gestational",  "Female_proBEH_careg_Childhood", "Female_proBEH_careg_Lifetime",
+  "Male_proBEH_careg_Gestational", "Male_proBEH_careg_Childhood", "Male_proBEH_careg_Lifetime",
+  
+  "all_socSKI_adole_Gestational", "all_socSKI_adole_Childhood",  "all_socSKI_adole_Lifetime",
+  "Female_socSKI_adole_Gestational",  "Female_socSKI_adole_Childhood", "Female_socSKI_adole_Lifetime",
+  "Male_socSKI_adole_Gestational", "Male_socSKI_adole_Childhood", "Male_socSKI_adole_Lifetime",
+  
+  "all_socSKI_careg_Gestational", "all_socSKI_careg_Childhood",  "all_socSKI_careg_Lifetime",
+  "Female_socSKI_careg_Gestational",  "Female_socSKI_careg_Childhood", "Female_socSKI_careg_Lifetime",
+  "Male_socSKI_careg_Gestational", "Male_socSKI_careg_Childhood", "Male_socSKI_careg_Lifetime"
+)
+  
+#result table formatted
+tbl<- left_join(res_plt, wt, by = "filename") |>
+  select(-c(4)) |>
+  mutate(filename = case_when(
+    # Replace longest patterns first
+    str_detect(filename, "_pb_std_score_") ~ str_replace(filename, "_pb_std_score_", "_proBEH_"),
+    str_detect(filename, "_ss_std_score_") ~ str_replace(filename, "_ss_std_score_", "_socSKI_"),
+    TRUE ~ filename
+  )) |>
+  mutate(filename = case_when(
+    str_detect(filename, "_c_") ~ str_replace(filename, "_c_", "_adole_"),
+    str_detect(filename, "_p_") ~ str_replace(filename, "_p_", "_careg_"),
+    TRUE ~ filename
+  )) |>
+  mutate(filename = factor(filename, levels = custom_order)) |>
+  arrange(filename)
+
+write_csv(tbl, "~/Documents/ope_ssis/res_sing_imput/qgc/qgc_mansc_tbl.csv")
+```
+
+#OPE - ssis linear regression
+```{r}
+analy_df<- read_csv("~/Documents/ope_ssis/res_sing_imput/ope_ssis_mar2025.csv") |>
+  mutate(cotinine = log2(cotinine),
+         lead = log2(lead),
+         cohort = "HOME") |>
+  mutate_if(is.character, as.factor) |>
+  rename(sex= gender) |>
+   mutate(across(2:13, log2))
+
+lm_df<- lm_func(
+  dependent_vars = c("ss_std_score_c",    "pb_std_score_c",
+                     "ss_std_score_p",    "pb_std_score_p"),
+  independent_vars=c("bcep_auc_life", "bdcipp_auc_life", "dnbp_auc_life", "dphp_auc_life", 
+                     "bcep_auc_gest", "bdcipp_auc_gest", "dnbp_auc_gest", "dphp_auc_gest",
+                     "bcep_auc_child", "bdcipp_auc_child",  "dnbp_auc_child", "dphp_auc_child"),
+  covariates = c("child_race",  "mat_age", "mari_st_p4", "mom_edu_p4_cat", "mid_income_p4",
+                 "bdi_p4", "depression_p4_cat", "rfr_gs_t", "cotinine", "lead"),
+  dat = analy_df, 
+  include_sex = TRUE
+  )
+```
+
+```{r}
+lm_res_tbl <- lm_df %>%
+  mutate(result = sprintf("%.2f (%.2f, %.2f)", coefficient, ci_lower, ci_upper)) %>%
+  # Make sure all combinations exist
+  complete(independent_variable, dependent_variable, sex_level, fill = list(result = NA)) %>%
+  pivot_wider(id_cols = independent_variable,
+              names_from = c(dependent_variable, sex_level),
+              values_from = result)
+
+write_csv(lm_res_tbl, "~/Documents/ope_ssis/res_sing_imput/mlr_results.csv")
+```
+
+
+#main figure
+```{r}
+res_plt<- read_csv("~/Documents/ope_ssis/res_sing_imput/qgc/qgc_estimates_all_auc_categ.csv") |>
+  mutate(
+    across(c(group, outcome, auc_category, gender), str_to_title),
+    auc_category = fct_relevel(auc_category, "Gestational", "Childhood", "Lifetime")) |>
+   filter(str_starts(filename, "boot_"))
+
+qgc_wt<- read_csv("~/Documents/ope_ssis/res_sing_imput/qgc/qgc_mansc_tbl.csv") |>
+  select(-c(3:5)) |>
+  separate(filename, into = c("group", "outcome", "reporter", "exposure_period"), sep = "_") %>%
+  mutate(
+    group = case_when(
+      group == "all" ~ "Overall",
+      group == "Male" ~ "Male",
+      group == "Female" ~ "Female"
+    ),
+    outcome = case_when(
+      outcome == "proBEH" ~ "Problem Behavior",
+      outcome == "socSKI" ~ "Social Skill"
+    ),
+    reporter = case_when(
+      reporter == "adole" ~ "Adolescent",
+      reporter == "careg" ~ "Caregiver"
+    ),
+    estimate = as.numeric(str_extract(boot, "^[\\d.-]+")),
+    ll = as.numeric(str_extract(boot, "(?<=\\()[\\d.-]+")),
+    ul = as.numeric(str_extract(boot, "(?<=, )[\\d.-]+")),
+  ) %>%
+  select(-boot)
+```
+
+#viz formatting
+```{r}
+library(tidyverse)
+library(patchwork)
+library(ggh4x)
+
+# Label is only exposure_period
+qgc_wt <- qgc_wt %>%
+    mutate(label = exposure_period)
+
+# Overall estimate + CI
+est_df <- qgc_wt %>%
+    select(label, outcome, reporter, group, estimate, ll, ul) %>%
+    mutate(facet = "Overall Estimate", OPE = "Overall")
+
+# OPE weights
+ope_df <- qgc_wt %>%
+    rename(overall_est = estimate) %>%
+    pivot_longer(cols = c(BCEP, BDCIPP, DNBP, DPHP),
+                 names_to = "OPE", values_to = "estimate") %>%
+    mutate(ll = NA_real_, ul = NA_real_, facet = "OPE Weights") %>%
+    select(label, outcome, reporter, group, estimate, ll, ul, OPE, facet)
+
+# Combine
+plot_df <- bind_rows(est_df, ope_df) %>%
+    mutate(facet = factor(facet, levels = c("Overall Estimate", "OPE Weights")))
+
+# Fixed axis limits for alignment
+est_lims <- plot_df %>% filter(facet == "Overall Estimate") %>%
+    summarise(lo = min(ll, na.rm = TRUE) - 0.5, hi = max(ul, na.rm = TRUE) + 0.5)
+ope_lims <- plot_df %>% filter(facet == "OPE Weights") %>%
+    summarise(lo = min(estimate, na.rm = TRUE) - 0.1, hi = max(estimate, na.rm = TRUE) + 0.1)
+
+# Helper functions
+make_p1 <- function(data) {
+    ggplot(data, aes(x = estimate, y = label)) +
+        geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+        geom_linerange(aes(xmin = ll, xmax = ul), na.rm = TRUE) +
+        geom_point(size = 3) +
+        scale_x_continuous(limits = c(est_lims$lo, est_lims$hi)) +
+        facet_nested(group + reporter ~ ., switch = "y",
+                     scales = "free_y", space = "free_y") +
+        labs(x = NULL, y = NULL) +
+        theme_minimal() +
+        theme(
+            text = element_text(color = "black"),
+            axis.text = element_text(color = "black", size = 10),
+            strip.placement = "outside",
+            strip.text.y.left = element_text(face = "bold", size = 9, angle = 0, color = "black"),
+            strip.background = element_blank(),
+            panel.spacing.y = unit(0.3, "lines"),
+            panel.grid.minor = element_blank()
+        )
+}
+
+make_p2 <- function(data) {
+    ggplot(data, aes(x = estimate, y = label)) +
+        geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+        geom_point(aes(color = OPE, shape = OPE), size = 3) +
+        scale_color_manual(values = c("BCEP" = "#E41A1C", "BDCIPP" = "#377EB8",
+                                      "DNBP" = "#4DAF4A", "DPHP" = "#FF7F00")) +
+        scale_shape_manual(values = c("BCEP" = 16, "BDCIPP" = 17,
+                                      "DNBP" = 15, "DPHP" = 18)) +
+        scale_x_continuous(limits = c(ope_lims$lo, ope_lims$hi)) +
+        facet_nested(group + reporter ~ .,
+                     scales = "free_y", space = "free_y") +
+        labs(x = NULL, y = NULL,
+             color = "OPE Biomarkers", shape = "OPE Biomarkers") +
+        theme_minimal() +
+        theme(
+            text = element_text(color = "black"),
+            axis.text.x = element_text(color = "black", size = 10),
+            axis.text.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            strip.text.y = element_text(color = "transparent"),
+            legend.position = "bottom",
+            legend.justification = "left",
+            legend.text = element_text(color = "black"),
+            legend.title = element_text(color = "black"),
+            panel.spacing.y = unit(0.3, "lines"),
+            panel.grid.minor = element_blank(),
+            strip.background = element_blank()
+        )
+}
+
+# Build rows split by outcome
+outcomes <- unique(plot_df$outcome)
+
+rows <- lapply(seq_along(outcomes), function(i) {
+    o <- outcomes[i]
+    d1 <- plot_df %>% filter(facet == "Overall Estimate", outcome == o)
+    d2 <- plot_df %>% filter(facet == "OPE Weights", outcome == o)
+    
+    label <- ggplot() +
+        annotate("text", x = 0.5, y = 0.5, label = o,
+                 fontface = "bold", size = 4, angle = 90, color = "black") +
+        theme_void()
+    
+    p1_title <- if (i == 1) "Bootstrap Estimate" else NULL
+    p2_title <- if (i == 1) "OPE Biomarker Weights" else NULL
+    
+    left <- make_p1(d1) + labs(title = p1_title) +
+        theme(plot.title = element_text(face = "bold", size = 10, hjust = 0.5, color = "black"))
+    
+    right <- make_p2(d2) + labs(title = p2_title) +
+        theme(plot.title = element_text(face = "bold", size = 10, hjust = 0.5, color = "black"))
+    
+    label + left + right + plot_layout(widths = c(0.3, 1.5, 3))
+})
+
+# Stack and collect legend
+rows[[1]] / rows[[2]] +
+    plot_layout(heights = c(1, 1), guides = "collect") &
+    theme(legend.position = "bottom")
+
+# Save
+ggsave("~/Documents/ope_ssis/res_sing_imput/qgc/qgc_estimate_weights.tiff",
+       width = 10, height = 8.5,
+       dpi = 300, bg = "white")
+```
+
+
+
+

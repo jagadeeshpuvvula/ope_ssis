@@ -14,13 +14,13 @@ dat<- read_csv(paste0(dat, "ope_ssis_imputed.csv"))
 model<- geeglm(ss_std_score_c ~ log(dphp)*visit + 
                  gender + child_race + mat_age + mari_st_p4 + mom_edu_p4_cat+
                  mid_income_p4 + cotinine, 
-  data = test, 
+  data = imp_dat_bcep, 
   id = id, 
   family="gaussian", corstr="independence")
 ```
 
 ```{r}
-gee_function <- function(data, output_folder, exposures, outcomes, covariates, imputation) {
+runGeeglm <- function(data, output_folder, exposures, outcomes, covariates, imputation, p_id) {
   # Create the output folder if it doesn't exist
   if (!dir.exists(output_folder)) {
     dir.create(output_folder)
@@ -45,7 +45,7 @@ gee_function <- function(data, output_folder, exposures, outcomes, covariates, i
         imp_data <- data[imputation == imp_level, ]
 
         # Fit the geeglm model
-        model <- geeglm(formula, data = imp_data, id = id, family = "gaussian", corstr = "independence")
+        model <- geeglm(formula, data = imp_data, id = p_id, family = "gaussian", corstr = "independence")
 
         # Save the model object to an RDA file with the modified file name
         save(model, file = file_name)
@@ -58,14 +58,20 @@ gee_function <- function(data, output_folder, exposures, outcomes, covariates, i
 }
 ```
 
+#testing
 ```{r}
-gee_function(data = dat,
-             output_folder = "~/Documents/ope_ssis/test",
-             exposures = c("bcep", "bdcipp", "dnbp", "dphp"),
-             outcomes = c("ss_std_score_c", "pb_std_score_c", "ss_std_score_p", "pb_std_score_p"),
-             covariates = c("gender", "child_race", "mat_age", "mari_st_p4", 
-                            "mom_edu_p4_cat", "mid_income_p4", "cotinine"),
-             imputation = dat$imp)
+runGeeglm(datasets = c("imp_dat_bcep", "imp_dat_bdcipp", "imp_dat_dnbp", "imp_dat_dphp"), 
+          covariates = c("gender", "child_race", "mat_age", "mari_st_p4", "mom_edu_p4_cat",
+                         "mid_income_p4", "cotinine" , "bdi_p4", "lead", "rfr_gs_t"),
+          outcome = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
+                      "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
+                      "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
+                      "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
+                      "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
+                      "int_raw_p", "as_raw_p"),
+          p_id="participant_id",
+          outputFolder = "~/Documents/ope_ssis/gee_mi_res_feb/")
+
 ```
 
 #function to compile results into a file
@@ -106,3 +112,116 @@ mi_result <- compile_gee_mi_results("~/Documents/ope_ssis/result/gee_mi_res")
 
 write_csv(mi_result, paste0(res, "mi_res_estimates.csv"))
 ```
+
+
+#function to run GEE - using dataframes from MICE miltiple imputation
+```{r}
+runGeeglm <- function(datasets, outcomes, outputFolder) {
+  for (dataset in datasets) {
+    # Extract the last part of the input data name
+    exposure <- tail(strsplit(dataset, "_")[[1]], 1)
+  
+    # Load the dataset
+    data <- get(dataset)
+  
+    # Iterate over each outcome
+    for (outcome in outcomes) {
+      # Perform geeglm analysis
+      fit <- with(data, geeglm(get(outcome) ~ log(get(exposure))*visit + 
+                                gender + child_race + mat_age + mari_st_p4 + mom_edu_p4_cat +
+                                mid_income_p4 + cotinine, 
+                              id = participant_id, 
+                              family = "gaussian", corstr = "independence"))
+    
+      # Save the output to the provided folder in RDA format
+      outputName <- paste(outputFolder, "/", dataset, "_", outcome, "_", exposure, ".rda", sep = "")
+      save(fit, file = outputName)
+    }
+  }
+}
+```
+
+#for testing only
+```{r}
+runGeeglm(datasets = c("imp_dat_dphp","imp_dat_bcep", "imp_dat_bdcipp",  "imp_dat_dnbp"),
+                  outcomes = c("ss_std_score_c", "com_raw_c", "coop_raw_c", "assert_raw_c","res_raw_c",
+                              "emp_raw_c", "eng_raw_c", "self_raw_c", "pb_std_score_c", "ext_raw_c",
+                              "bul_raw_c", "hyp_raw_c", "int_raw_c", "ss_std_score_p", "com_raw_p",
+                              "coop_raw_p", "assert_raw_p", "res_raw_p", "emp_raw_p", "eng_raw_p",
+                              "self_raw_p", "pb_std_score_p", "ext_raw_p", "bul_raw_p", "hyp_raw_p",
+                              "int_raw_p", "as_raw_p"),
+                  outputFolder = "~/Documents/ope_ssis/result/gee_mi_res_feb/")
+```
+
+#function to extract GEE estimates from rda objects
+```{r}
+extractGEE <- function(input_folder, output_folder) {
+  # Get a list of RDA files in the input folder
+  rda_files <- list.files(input_folder, pattern = "\\.rda$", full.names = TRUE)
+  
+  # Initialize an empty dataframe to store the results
+  data <- data.frame()
+  
+  # Loop through each RDA file
+  for (file in rda_files) {
+    # Load the RDA file
+    load(file)
+    
+    # Perform operations and extract required rows
+    extracted_data <- as_tibble(tidy(pool(fit), conf.int = TRUE)) %>%
+      slice(2, 12, 13)
+    
+    # Get the filename without path or extension
+    filename <- str_remove(basename(file), "\\.[^.]+$")
+    
+    # Trim the filename to remove the "imp_dat_" prefix
+    trimmed_filename <- str_remove(filename, "^imp_dat_")
+    
+    # Split the filename into exposure and outcome variables
+    split_strings <- str_split(trimmed_filename, "_")
+    exposure <- split_strings[[1]][1]
+    outcome <- paste(split_strings[[1]][2:(length(split_strings[[1]]) - 1)], collapse = "_")
+    
+    # Add the exposure and outcome variables
+    extracted_data$exposure <- exposure
+    extracted_data$outcome <- outcome
+    
+    # Bind the extracted data to the existing dataframe
+    data <- bind_rows(data, extracted_data)
+  }
+  
+  # Export the dataframe as a CSV to the output folder
+  output_file <- file.path(output_folder, "output.csv")
+  write_csv(data, output_file)
+}
+```
+
+#linear contribution
+```{r}
+load("~/Documents/ope_ssis/result/gee_mi_res_march/imp_dat_bcep_as_raw_p_bcep.rda")
+
+m_1<-fit$analyses[1][[1]]
+
+m_1$formula <- as.formula(gsub("log\\(get\\(exposure\\)\\)", "bcep", deparse(m_1$formula)))
+names(m_1$coefficients) <- gsub("log\\(get\\(exposure\\)\\)", "bcep", names(m_1$coefficients))
+
+confint(
+  glht(
+    m_1, 
+    linfct = c("bcep=0",
+               "bcep + bcep:visitprenatal_26W=0",
+               "bcep + bcep:visitdelivery=0",
+               "bcep + bcep:visitpostnatal_1_yr=0",
+               "bcep + bcep:visitpostnatal_2_yr=0",
+               "bcep + bcep:visitpostnatal_3_yr=0",
+               "bcep + bcep:visitpostnatal_5_yr=0",
+               "bcep + bcep:visitpostnatal_8_yr=0")
+  )
+)
+```
+
+```{r}
+
+```
+
+

@@ -48,4 +48,46 @@ summary_stats<- df |>
 write_csv(summary_stats, paste0(res, "summary_analytic_dat.csv"))
 ```
 
+#for revision
+```{r}
+exp_dat<- read_csv(paste0(dat_loc, "exp_dat.csv")) |>
+  pivot_longer(cols = -participant_id, names_to = "metric", values_to = "value") |>
+  extract(metric, into = c("analyte", "visit"), regex = "^([^_]+)_(.*)$") |>
+  mutate(value = na_if(value, 9999),
+         value = na_if(value, 7777)) |>
+  drop_na(value)
+
+#full summary
+summary_table <- exp_dat |>
+    mutate(period = if_else(str_starts(visit, "postnatal"),
+                            "child",
+                            "gestation")) |>
+    distinct(participant_id, visit, period) |>
+    group_by(participant_id, period) |>
+    summarise(n_visits = n(), .groups = "drop") |>
+    pivot_wider(names_from = period, values_from = n_visits, values_fill = 0) |>
+    mutate(lifetime = gestation + child) |>
+    count(gestation, child, lifetime, name = "n_participants")
+
+#for publication summary
+summary_table <- exp_dat |>
+  mutate(period = if_else(str_starts(visit, "postnatal"),
+                          "child",
+                          "gestation")) |>
+  distinct(participant_id, visit, period) |>
+  group_by(participant_id, period) |>
+  summarise(n_visits = n(), .groups = "drop") |>
+  pivot_wider(names_from = period, values_from = n_visits, values_fill = 0) |>
+  mutate(
+    lifetime = gestation + child,
+    gestation_group = if_else(gestation < 2, "<2", "≥2"),
+    child_group = if_else(child < 4, "<4", "≥4"),
+    lifetime_group = if_else(lifetime < 4, "<4", "≥4")
+  ) |>
+  count(gestation_group, child_group, lifetime_group, name = "n_participants")
+```
+
+
+
+
 

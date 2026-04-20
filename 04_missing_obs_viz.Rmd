@@ -8,9 +8,32 @@ output: pdf_document
 #load data
 ```{r}
 dat_loc <- "~/Documents/ope_ssis/data/"
-df<- read_csv(paste0(dat_loc, "analytic_set.csv")) |>
-  rename_at(vars(contains("postnatal_")), ~ str_replace(., "postnatal_", "Child-")) 
+df <- read_csv(paste0(dat_loc, "analytic_set.csv")) |>
+  rename_with(~ str_replace(., "postnatal_", "Child-"), contains("postnatal_")) |>
+  rename_with(~ str_replace(., "prenatal_", "Gestational-"), contains("prenatal_"))
 ```
+
+#addition to table 1
+```{r}
+df_summ <- df |>
+  select(c(1, 34, 42, 61:71)) |>
+  mutate(across(4:last_col(), 
+                ~ if(is.numeric(.)) {
+                    factor(ifelse(. > median(., na.rm = TRUE), "above_median", "below_median"))
+                  } else if(is.factor(.)) {
+                    factor(ifelse(as.numeric(.) > median(as.numeric(.), na.rm = TRUE), "above_median", "below_median"))
+                  } else {
+                    factor(.)
+                  }))
+
+x<- summarize_by_category(data = df_summ,
+                          continuous_vars = c("ss_std_score_c", "pb_std_score_c"),
+                          categorical_vars = c("gender", "child_race", "mari_st_p4", 
+                                               "mom_edu_p4_cat", "depression_p4_cat",
+                                               "mat_age", "rfr_gs_t", "mid_income_p4",
+                                               "cotinine", "lead"))
+```
+
 
 #exp_dat from 01_exp_dat.rmd file line 87
 ```{r}
@@ -36,16 +59,16 @@ missing_data_long <- tidyr::pivot_longer(
 ```{r}
 # Define the desired order for y-axis labels
 custom_order <- c(
-  "BCEP-prenatal-16w", "BCEP-prenatal-26w", "BCEP-delivery", "BCEP-child-1-yr", "BCEP-child-2-yr", "BCEP-child-3-yr", 
+  "BCEP-gestational-16w", "BCEP-gestational-26w", "BCEP-delivery", "BCEP-child-1-yr", "BCEP-child-2-yr", "BCEP-child-3-yr", 
    "BCEP-child-5-yr", "BCEP-child-8-yr", 
   
-  "BDCIPP-prenatal-16w", "BDCIPP-prenatal-26w", "BDCIPP-delivery", "BDCIPP-child-1-yr", "BDCIPP-child-2-yr", 
+  "BDCIPP-gestational-16w", "BDCIPP-gestational-26w", "BDCIPP-delivery", "BDCIPP-child-1-yr", "BDCIPP-child-2-yr", 
   "BDCIPP-child-3-yr", "BDCIPP-child-5-yr", "BDCIPP-child-8-yr", 
   
-  "DNBP-prenatal-16w", "DNBP-prenatal-26w", "DNBP-delivery", "DNBP-child-1-yr", "DNBP-child-2-yr", "DNBP-child-3-yr", 
+  "DNBP-gestational-16w", "DNBP-gestational-26w", "DNBP-delivery", "DNBP-child-1-yr", "DNBP-child-2-yr", "DNBP-child-3-yr", 
    "DNBP-child-5-yr", "DNBP-child-8-yr", 
   
-  "DPHP-prenatal-16w", "DPHP-prenatal-26w", "DPHP-delivery", "DPHP-child-1-yr", "DPHP-child-2-yr", "DPHP-child-3-yr", 
+  "DPHP-gestational-16w", "DPHP-gestational-26w", "DPHP-delivery", "DPHP-child-1-yr", "DPHP-child-2-yr", "DPHP-child-3-yr", 
    "DPHP-child-5-yr", "DPHP-child-8-yr"
 )
 ```
@@ -71,8 +94,8 @@ missing_percentage <- missing_data_long |>
   mutate(Variables = sapply(Variables, transform_variable))
 
 #manually adding metabolites detected among all
-write_csv(missing_percentage, "~/Documents/ope_ssis/result/missing_pct_for_fig.csv")
-missing_percentage<- read_csv("~/Documents/ope_ssis/result/missing_pct_for_fig.csv")
+write_csv(missing_percentage, "~/Documents/ope_ssis/result/missing_pct_for_fig_nov2024.csv")
+missing_percentage<- read_csv("~/Documents/ope_ssis/result/missing_pct_for_fig_nov2024.csv")
 ##########
 
 missing_data_long_filtered <- missing_data_long |>
@@ -111,7 +134,7 @@ ggplot(missing_data_long_filtered, aes(x = Observations, y = factor(Variables, l
 ```
 
 ```{r}
-ggsave("~/Documents/ope_ssis/result/missing_pattern_ope_with_ssis.tiff", 
+ggsave("~/Documents/ope_ssis/result/missing_pattern_ope_with_ssis_nov2024.tiff", 
        width = 10,height = 7,
        dpi=300)
 ```

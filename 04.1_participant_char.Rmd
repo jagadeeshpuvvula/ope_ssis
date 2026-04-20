@@ -1,0 +1,46 @@
+---
+title: "04.2_participant_char"
+author: "Puvvula"
+date: "2024-03-06"
+output: pdf_document
+---
+
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, qgcomp, norm, mice, geepack, parallel)
+
+dat_loc <- "~/Documents/ope_ssis/data/"
+res<- "~/Documents/ope_ssis/result/"
+```
+
+#SKIP UNTIL LINE 93 - which loads the imputed datasets from an R object
+
+```{r}
+dat<- read_csv(paste0(dat_loc, "analytic_set.csv")) |>
+  select(c(1, 65:75)) 
+```
+
+```{r}
+summary<- appliedepi::summarize_variables(data = dat,
+                                continuous_variables = c("mat_age", "mid_income_p4", "rfr_gs_t", "cotinine",
+                                                         "lead"),
+                                categorical_variables = c("gender", "child_race", "mari_st_p4",
+                                                          "mom_edu_p4_cat", "bdi_p4", "depression_p4_cat"))
+```
+
+
+```{r}
+x<-ope_exp_n1 %>%
+    group_by(analyte_code, visit) %>%
+    summarise(count_flg_lod_1 = sum(flg_lod == "1", na.rm = TRUE),
+              percentage_flg_lod_1 = sprintf("%.2f%%", (count_flg_lod_1 / n()) * 100))
+```
+
+#participant charectistics by inclusion and exclusion
+```{r}
+covar<- read_csv("~/Documents/ope_ssis/data/raw/HOME_Data_20220810_tailored_OPE.csv")
+```
+
+
+
